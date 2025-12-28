@@ -14,7 +14,7 @@ if "langue" not in st.session_state: st.session_state["langue"] = "Français"
 if "view" not in st.session_state: st.session_state["view"] = "login"
 if "code_secret" not in st.session_state: st.session_state["code_secret"] = "Yassine05"
 
-VERSION = "6.0"
+VERSION = "6.1"
 LAST_UPDATE = "28/12/2025"
 AUTHOR = "Yael"
 
@@ -33,7 +33,13 @@ init_file(USERS_FILE, ["pseudo", "password", "role"])
 init_file(DEMANDES_FILE, ["pseudo", "password"])
 init_file(FORGOT_FILE, ["pseudo"])
 
-# Chargement configuration dates
+# Vérification Admin par défaut
+df_users_init = pd.read_csv(USERS_FILE)
+if "Yael" not in df_users_init["pseudo"].values:
+    admin_row = pd.DataFrame([["Yael", "Yassine05", "Admin"]], columns=["pseudo", "password", "role"])
+    pd.concat([df_users_init, admin_row], ignore_index=True).to_csv(USERS_FILE, index=False)
+
+# Chargement dates Ramadan
 if os.path.exists(CONFIG_FILE):
     conf_df = pd.read_csv(CONFIG_FILE)
     st.session_state["debut_ramadan"] = date.fromisoformat(conf_df.iloc[0]["debut"])
@@ -56,17 +62,14 @@ def charger_hadith_aleatoire(langue):
     try:
         if os.path.exists(filename):
             with open(filename, "r", encoding="utf-8") as f:
-                lignes = [line.strip() for line in f.readlines() if line.strip()]
+                lignes = [l.strip() for l in f.readlines() if l.strip()]
             if lignes:
                 choix = random.choice(lignes)
-                if "|" in choix:
-                    texte, source = choix.split("|")
-                    return texte.strip(), source.strip()
-                return choix, "Source inconnue"
-        return "Fichier hadith manquant.", "Info"
+                return (choix.split("|")[0].strip(), choix.split("|")[1].strip()) if "|" in choix else (choix, "Riyad As-Salihin")
+        return "Fichier Hadith introuvable.", "Info"
     except: return "Erreur de lecture.", "Erreur"
 
-# --- 3. TRADUCTIONS ---
+# --- 3. TRADUCTIONS (CORRIGÉES POUR ÉVITER KEYERROR) ---
 TRAD = {
     "Français": {
         "titre_norm": "📖 Bilan de Lecture", "titre_ram": "🌙 Mode Ramadan Pro", "titre_params": "⚙️ Configuration",
@@ -83,6 +86,7 @@ TRAD = {
         "hadith_btn": "GÉNÉRER MESSAGE HADITH", "khatma": "Objectif Khatmas",
         "home_btn": "🏠 Accueil", "view_prog": "📊 Progression visuelle", "notif": "🔔 Notifications",
         "avant_ram": "Il reste {} jours avant le Ramadan", "pendant_ram": "Il reste {} jours avant la fin",
+        "date_deb": "Début du Ramadan :", "date_fin": "Fin du Ramadan :",
         "info_title": "ℹ️ Infos Logiciel"
     },
     "العربية": {
@@ -100,20 +104,17 @@ TRAD = {
         "hadith_btn": "إنشاء رسالة حديث", "khatma": "هدف الختمات",
         "home_btn": "🏠 الرئيسية", "view_prog": "📊 التقدم البصري", "notif": "🔔 تنبيهات",
         "avant_ram": "متبقي {} أيام على رمضان", "pendant_ram": "متبقي {} أيام على نهاية رمضان",
+        "date_deb": "بداية رمضان :", "date_fin": "نهاية رمضان :",
         "info_title": "ℹ️ معلومات"
     }
 }
-L = TRAD[st.session_state["langue"]]
 
-# --- 4. STYLE DYNAMIQUE ---
+L = TRAD.get(st.session_state["langue"], TRAD["Français"])
+
+# --- 4. STYLE ---
 COLOR = "#C5A059" if st.session_state["ramadan_mode"] else "#047857"
 st.set_page_config(page_title="Bilan Coran", layout="wide")
-st.markdown(f"""<style>
-    h1, h2, h3, p, label, span {{ color: {COLOR} !important; }}
-    div.stButton > button {{ border: 2px solid {COLOR} !important; color: {COLOR} !important; border-radius: 10px; font-weight: bold; width: 100%; }}
-    div.stButton > button:hover {{ background-color: {COLOR} !important; color: white !important; }}
-    .stProgress > div > div > div > div {{ background-color: {COLOR} !important; }}
-</style>""", unsafe_allow_html=True)
+st.markdown(f"<style>h1,h2,h3,p,label,span{{color:{COLOR}!important;}} div.stButton>button{{border:2px solid {COLOR}!important; color:{COLOR}!important; border-radius:10px; font-weight:bold; width:100%;}} div.stButton>button:hover{{background-color:{COLOR}!important; color:white!important;}} .stProgress>div>div>div>div{{background-color:{COLOR}!important;}}</style>", unsafe_allow_html=True)
 
 # --- 5. CHARGEMENT DATA ---
 suffixe = "ramadan" if st.session_state["ramadan_mode"] else "lecture"
@@ -129,8 +130,8 @@ if not st.session_state["auth"]:
         c1, c2, c3 = st.columns(3)
         with c1:
             if st.button(L["btn_unlock"]):
-                df_u = pd.read_csv(USERS_FILE)
-                match = df_u[(df_u["pseudo"] == u_in) & (df_u["password"] == p_in)]
+                udb = pd.read_csv(USERS_FILE)
+                match = udb[(udb["pseudo"] == u_in) & (udb["password"] == p_in)]
                 if not match.empty:
                     st.session_state["auth"] = True
                     st.session_state["user_connected"] = u_in
@@ -142,24 +143,23 @@ if not st.session_state["auth"]:
         with c3:
             if st.button(L["btn_forgot"]):
                 if u_in:
-                    df_f = pd.read_csv(FORGOT_FILE)
-                    if u_in not in df_f["pseudo"].values:
-                        pd.concat([df_f, pd.DataFrame([[u_in]], columns=["pseudo"])], ignore_index=True).to_csv(FORGOT_FILE, index=False)
+                    fdb = pd.read_csv(FORGOT_FILE)
+                    if u_in not in fdb["pseudo"].values:
+                        pd.concat([fdb, pd.DataFrame([[u_in]], columns=["pseudo"])], ignore_index=True).to_csv(FORGOT_FILE, index=False)
                     st.success("Yael a été informé.")
                 else: st.warning("Pseudo ?")
-
     elif st.session_state["view"] == "signup":
         st.title("📝 Inscription")
-        nu, np, ncp = st.text_input("Pseudo"), st.text_input("Mdp", type="password"), st.text_input("Confirme", type="password")
-        if st.button("Envoyer"):
-            if np == ncp:
-                df_d = pd.read_csv(DEMANDES_FILE)
-                pd.concat([df_d, pd.DataFrame([[nu, np]], columns=["pseudo", "password"])], ignore_index=True).to_csv(DEMANDES_FILE, index=False)
+        nu, np, ncp = st.text_input("Pseudo"), st.text_input("Pass", type="password"), st.text_input("Confirme", type="password")
+        if st.button("S'inscrire"):
+            if np == ncp and nu:
+                ddb = pd.read_csv(DEMANDES_FILE)
+                pd.concat([ddb, pd.DataFrame([[nu, np]], columns=["pseudo", "password"])], ignore_index=True).to_csv(DEMANDES_FILE, index=False)
                 st.success("Demande envoyée !"); st.session_state["view"] = "login"
         if st.button("Retour"): st.session_state["view"] = "login"; st.rerun()
     st.stop()
 
-# --- 7. BARRE LATÉRALE ---
+# --- 7. SIDEBAR ---
 with st.sidebar:
     st.header(f"👤 {st.session_state['user_connected']}")
     if st.button(L["home_btn"]): st.session_state["page_params"] = False; st.rerun()
@@ -168,8 +168,8 @@ with st.sidebar:
         nb_n = len(pd.read_csv(DEMANDES_FILE)) + len(pd.read_csv(FORGOT_FILE))
         if st.button(f"{L['notif']} ({nb_n})"): st.session_state["page_params"] = "notif"; st.rerun()
     st.divider()
-    btn_l = L["mode_norm_btn"] if st.session_state["ramadan_mode"] else L["mode_ram_btn"]
-    if st.button(btn_l):
+    btn_m = L["mode_norm_btn"] if st.session_state["ramadan_mode"] else L["mode_ram_btn"]
+    if st.button(btn_m):
         st.session_state["ramadan_mode"] = not st.session_state["ramadan_mode"]
         st.rerun()
     if st.button(L["btn_logout"]): st.session_state["auth"] = False; st.rerun()
@@ -177,36 +177,43 @@ with st.sidebar:
 # --- 8. PAGES SPECIALES ---
 if st.session_state["page_params"] == "notif" and st.session_state["is_admin"]:
     st.title(L["notif"])
-    df_d = pd.read_csv(DEMANDES_FILE)
-    for i, r in df_d.iterrows():
+    # Inscriptions
+    ddb = pd.read_csv(DEMANDES_FILE)
+    for i, r in ddb.iterrows():
         c1, c2, c3 = st.columns([2,1,1])
-        c1.write(f"**{r['pseudo']}**")
+        c1.write(f"Insc : **{r['pseudo']}**")
         if c2.button("✅", key=f"ok_{i}"):
             new_u = pd.DataFrame([[r['pseudo'], r['password'], "Membre"]], columns=["pseudo", "password", "role"])
             pd.concat([pd.read_csv(USERS_FILE), new_u], ignore_index=True).to_csv(USERS_FILE, index=False)
             df.loc[r['pseudo']] = [1, 10, 0, 1]; df.to_csv(DATA_FILE)
-            df_d.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
+            ddb.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
         if c3.button("❌", key=f"no_{i}"):
-            df_d.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
+            ddb.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
+    # Mdp oubliés
+    fdb = pd.read_csv(FORGOT_FILE)
+    for i, r in fdb.iterrows():
+        c1, c2 = st.columns([3,1])
+        c1.write(f"Mdp perdu : **{r['pseudo']}**")
+        if c2.button("🗑️", key=f"f_{i}"):
+            fdb.drop(i).to_csv(FORGOT_FILE, index=False); st.rerun()
     st.stop()
 
 if st.session_state["page_params"] == "settings":
     st.title(L["titre_params"])
     c1, c2 = st.columns(2)
     with c1:
-        st.subheader("🌐 " + L["lang_btn"])
+        st.subheader(L["lang_btn"])
         ch = st.selectbox("", list(TRAD.keys()), index=list(TRAD.keys()).index(st.session_state["langue"]))
         if ch != st.session_state["langue"]: st.session_state["langue"] = ch; st.rerun()
-        
         st.divider()
-        st.subheader("📅 Dates")
-        d1 = st.date_input(L["date_deb"], st.session_state["debut_ramadan"])
-        d2 = st.date_input(L["date_fin"], st.session_state["fin_ramadan"])
-        if st.button(L["btn_save"]):
-            pd.DataFrame({"debut":[d1.isoformat()],"fin":[d2.isoformat()]}).to_csv(CONFIG_FILE, index=False)
+        st.subheader("📅 Dates Ramadan")
+        deb = st.date_input(L["date_deb"], st.session_state["debut_ramadan"])
+        fin = st.date_input(L["date_fin"], st.session_state["fin_ramadan"])
+        if st.button(L["btn_save"], key="save_dates"):
+            pd.DataFrame({"debut": [deb.isoformat()], "fin": [fin.isoformat()]}).to_csv(CONFIG_FILE, index=False)
             st.success("OK")
     with c2:
-        st.subheader("👥 " + L["add_pre"])
+        st.subheader(L["add_pre"])
         nom_s = st.text_input("")
         if st.button(L["btn_add"]):
             if nom_s and nom_s not in df.index:
@@ -218,7 +225,7 @@ if st.session_state["page_params"] == "settings":
                 df = df.drop(cible); df.to_csv(DATA_FILE); st.rerun()
     st.divider()
     with st.expander(L["info_title"]):
-        st.write(f"👤 Creator: {AUTHOR} | 📅 Update: {LAST_UPDATE} | 🚀 Version: {VERSION}")
+        st.write(f"👤 Creator: {AUTHOR} | 🚀 Version: {VERSION} | 📅 Update: {LAST_UPDATE}")
     st.stop()
 
 # --- 9. ACCUEIL ---
@@ -231,7 +238,6 @@ if st.session_state["ramadan_mode"]:
     elif auj <= st.session_state["fin_ramadan"]:
         st.success(L["pendant_ram"].format((st.session_state["fin_ramadan"] - auj).days))
 
-# Vue filtrée
 view_df = df if st.session_state["is_admin"] else df[df.index == st.session_state["user_connected"]]
 
 if not view_df.empty:
@@ -254,9 +260,9 @@ if not view_df.empty:
     c1, c2, c3 = st.columns(3)
     with c1:
         with st.expander(L["exp_msg"]):
-            d_c = st.date_input(L["echeance"], auj + timedelta(days=1))
-            diff = (d_c - auj).days
-            msg = f"*Bilan {d_c.strftime('%d/%m')}* :\n\n"
+            dc = st.date_input(L["echeance"], auj + timedelta(days=1))
+            diff = (dc - auj).days
+            msg = f"*Bilan {dc.strftime('%d/%m')}* :\n\n"
             for n, r in view_df.iterrows():
                 p = (int(r["Page Actuelle"]) + (int(r["Rythme"]) * diff)) % 604 or 1
                 msg += f"• *{n.upper()}* : p.{int(p)}\n"
@@ -267,14 +273,14 @@ if not view_df.empty:
             pa = st.number_input(L["pg_act"], 1, 604, int(df.loc[u, "Page Actuelle"]))
             if st.session_state["ramadan_mode"]:
                 ok = st.number_input(L["khatma"], 1, 10, int(df.loc[u, "Objectif Khatmas"]))
-                cf = st.number_input("Khatmas finies", 0, 10, int(df.loc[u, "Cycles Finis"]))
-                if st.button(L["btn_save"], key="r_save"):
-                    j_rest = max(1, (st.session_state["fin_ramadan"] - auj).days)
-                    rythme = max(1, round(((ok * 604) - (pa + (cf * 604))) / j_rest, 1))
-                    df.loc[u] = [pa, rythme, cf, ok]; df.to_csv(DATA_FILE); st.rerun()
+                cf = st.number_input("Fini", 0, 10, int(df.loc[u, "Cycles Finis"]))
+                if st.button(L["btn_save"], key="r_s"):
+                    j = max(1, (st.session_state["fin_ramadan"] - auj).days)
+                    ry = max(1, round(((ok * 604) - (pa + (cf * 604))) / j, 1))
+                    df.loc[u] = [pa, ry, cf, ok]; df.to_csv(DATA_FILE); st.rerun()
             else:
                 ry = st.number_input(L["rythme"], 1, 100, int(df.loc[u, "Rythme"]))
-                if st.button(L["btn_save"], key="n_save"):
+                if st.button(L["btn_save"], key="n_s"):
                     df.loc[u, ["Page Actuelle", "Rythme"]] = [pa, ry]; df.to_csv(DATA_FILE); st.rerun()
     with c3:
         with st.expander(L["exp_prec"]):
@@ -298,4 +304,4 @@ if not view_df.empty:
     for n, r in view_df.iterrows():
         plan_df[n] = [int((int(r["Page Actuelle"]) + (int(r["Rythme"]) * i)) % 604 or 1) for i in range(30)]
     st.dataframe(plan_df, use_container_width=True)
-else: st.info("Ajoutez des profils.")
+else: st.info("Aucune donnée.")
