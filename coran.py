@@ -12,7 +12,7 @@ if "ramadan_mode" not in st.session_state: st.session_state["ramadan_mode"] = Fa
 if "page_params" not in st.session_state: st.session_state["page_params"] = False
 if "view" not in st.session_state: st.session_state["view"] = "login"
 
-VERSION = "5.2"
+VERSION = "5.3"
 AUTHOR = "Yael"
 
 # --- 2. GESTION DES FICHIERS ---
@@ -137,30 +137,54 @@ with st.sidebar:
         st.rerun()
     if st.button(L["btn_logout"]): st.session_state["auth"] = False; st.rerun()
 
-# --- 8. PAGES SPECIALES ---
+# --- 8. PAGES SPECIALES (MODIFICATIONS ICI) ---
 if st.session_state["page_params"] == "notif" and st.session_state["is_admin"]:
     st.title("🔔 Notifications Admin")
+    
+    st.subheader("Inscriptions en attente")
     df_d = pd.read_csv(DEMANDES_FILE)
-    for i, r in df_d.iterrows():
-        c1, c2 = st.columns([3,1])
-        c1.write(f"**{r['pseudo']}** veut s'inscrire.")
-        if c2.button("OK", key=f"a_{i}"):
-            new_u = pd.DataFrame([[r['pseudo'], r['password'], "Membre"]], columns=["pseudo", "password", "role"])
-            pd.concat([pd.read_csv(USERS_FILE), new_u], ignore_index=True).to_csv(USERS_FILE, index=False)
-            df.loc[r['pseudo']] = [1, 10, 0, 1]; df.to_csv(DATA_FILE)
-            df_d.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
+    if df_d.empty:
+        st.write("Aucune nouvelle inscription.")
+    else:
+        for i, r in df_d.iterrows():
+            c1, c2, c3 = st.columns([2,1,1])
+            c1.write(f"**{r['pseudo']}** veut s'inscrire.")
+            if c2.button("Approuver ✅", key=f"app_{i}"):
+                new_u = pd.DataFrame([[r['pseudo'], r['password'], "Membre"]], columns=["pseudo", "password", "role"])
+                pd.concat([pd.read_csv(USERS_FILE), new_u], ignore_index=True).to_csv(USERS_FILE, index=False)
+                # Créer le profil dans les fichiers de sauvegarde
+                for f_name in ["sauvegarde_lecture.csv", "sauvegarde_ramadan.csv"]:
+                    p_path = os.path.join(dossier, f_name)
+                    if os.path.exists(p_path):
+                        temp_df = pd.read_csv(p_path, index_col=0)
+                        temp_df.loc[r['pseudo']] = [1, 10, 0, 1]
+                        temp_df.to_csv(p_path)
+                df_d.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
+            
+            # BOUTON REFUSER
+            if c3.button("Refuser ❌", key=f"ref_{i}"):
+                df_d.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
     
     st.divider()
+    st.subheader("Mots de passe oubliés")
     df_f = pd.read_csv(FORGOT_FILE)
-    for i, r in df_f.iterrows():
-        c1, c2 = st.columns([2,2])
-        c1.write(f"Mdp oublié : **{r['pseudo']}**")
-        pw = c2.text_input("Nouveau MDP", key=f"f_{i}")
-        if c2.button("Changer", key=f"fb_{i}"):
-            u_db = pd.read_csv(USERS_FILE)
-            u_db.loc[u_db["pseudo"] == r['pseudo'], "password"] = pw
-            u_db.to_csv(USERS_FILE, index=False)
-            df_f.drop(i).to_csv(FORGOT_FILE, index=False); st.rerun()
+    if df_f.empty:
+        st.write("Aucun signalement.")
+    else:
+        for i, r in df_f.iterrows():
+            c1, c2, c3 = st.columns([2,1,1])
+            c1.write(f"Mdp oublié : **{r['pseudo']}**")
+            pw = c2.text_input("Nouveau MDP", key=f"pw_{i}", type="password")
+            if c2.button("Changer", key=f"fb_{i}"):
+                if pw:
+                    u_db = pd.read_csv(USERS_FILE)
+                    u_db.loc[u_db["pseudo"] == r['pseudo'], "password"] = pw
+                    u_db.to_csv(USERS_FILE, index=False)
+                    df_f.drop(i).to_csv(FORGOT_FILE, index=False)
+                    st.success("Modifié !"); st.rerun()
+                else: st.warning("Tape un MDP.")
+            if c3.button("Ignorer", key=f"ign_{i}"):
+                df_f.drop(i).to_csv(FORGOT_FILE, index=False); st.rerun()
     st.stop()
 
 if st.session_state["page_params"] == "settings":
@@ -179,14 +203,12 @@ if st.session_state["page_params"] == "settings":
 st.title(L["titre_ram"] if st.session_state["ramadan_mode"] else L["titre_norm"])
 auj = date.today()
 
-# Compte à rebours
 if st.session_state["ramadan_mode"]:
     if auj < st.session_state["debut_ramadan"]:
         st.info(L["avant_ram"].format((st.session_state["debut_ramadan"] - auj).days))
     elif auj <= st.session_state["fin_ramadan"]:
         st.success(L["pendant_ram"].format((st.session_state["fin_ramadan"] - auj).days))
 
-# Filtrage admin/membre
 view_df = df if st.session_state["is_admin"] else df[df.index == st.session_state["user_connected"]]
 
 if not view_df.empty:
@@ -198,7 +220,6 @@ if not view_df.empty:
         recap[L["col_prog"]] = (recap["Page Actuelle"] / total_pg * 100).round(1).astype(str) + "%"
     st.table(recap)
 
-    # Actions
     st.divider()
     c_maj, c_prec = st.columns(2)
     
@@ -233,7 +254,6 @@ if not view_df.empty:
                 df.loc[u_adj, "Page Actuelle"] = int(nouvelle_page)
                 df.to_csv(DATA_FILE); st.rerun()
 
-    # Planning
     st.divider()
     st.subheader("📅 Planning (7 prochains jours)")
     planning = pd.DataFrame(index=[(auj + timedelta(days=i)).strftime("%d/%m") for i in range(7)])
