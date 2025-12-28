@@ -1,16 +1,20 @@
 import streamlit as st
 import pandas as pd
+from datetime import date, timedelta
+import os
+import random
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import os
-import random
-from datetime import date, timedelta
 
-# --- 1. CONFIGURATION DE LA PAGE ---
-st.set_page_config(page_title="Bilan Coran Pro", layout="wide", page_icon="🌙")
+# --- 1. CONFIGURATION INITIALE ---
+if "auth" not in st.session_state: st.session_state["auth"] = False
+if "user_connected" not in st.session_state: st.session_state["user_connected"] = None
+if "is_admin" not in st.session_state: st.session_state["is_admin"] = False
+if "ramadan_mode" not in st.session_state: st.session_state["ramadan_mode"] = False
+if "page_params" not in st.session_state: st.session_state["page_params"] = False
 
-# --- 2. FONCTION ENVOI EMAIL ---
+# --- 2. FONCTION EMAIL SMTP ---
 def envoyer_email(destinataire, sujet, corps):
     try:
         expediteur = st.secrets["gmail"]["sender_email"]
@@ -26,166 +30,168 @@ def envoyer_email(destinataire, sujet, corps):
         server.send_message(msg)
         server.quit()
         return True
-    except:
-        return False
+    except: return False
 
-# --- 3. GESTION DE LA BASE DE DONNÉES ---
-USERS_FILE = "users_db.csv"
+# --- 3. GESTION DES FICHIERS ---
+dossier = os.path.dirname(__file__)
+CONFIG_FILE = os.path.join(dossier, "config_dates.csv")
+USERS_FILE = os.path.join(dossier, "users.csv")
+
+# Chargement / Création des utilisateurs
 if not os.path.exists(USERS_FILE):
-    # Création du fichier avec Yael comme Admin par défaut
-    df_init = pd.DataFrame([["yael@admin.com", "Yael", "Yassine05", "Validé", 1, 10, 0, 1]], 
-                           columns=["email", "pseudo", "password", "statut", "page", "rythme", "finies", "objectif"])
-    df_init.to_csv(USERS_FILE, index=False)
+    # Ajout de la colonne Email pour la récupération
+    df_users = pd.DataFrame([["yael@admin.com", "Yael", "Yassine05", "Admin", "Validé"]], 
+                           columns=["email", "pseudo", "password", "role", "statut"])
+    df_users.to_csv(USERS_FILE, index=False)
+else:
+    df_users = pd.read_csv(USERS_FILE)
 
-def charger(): return pd.read_csv(USERS_FILE)
-def sauver(df): df.to_csv(USERS_FILE, index=False)
+def verifier_et_creer_sauvegarde(fichier_cible):
+    if not os.path.exists(fichier_cible):
+        df_vide = pd.DataFrame(columns=["Page Actuelle", "Rythme", "Cycles Finis", "Objectif Khatmas"])
+        df_vide.index.name = "Nom"
+        for p in df_users[df_users["statut"] == "Validé"]["pseudo"]:
+            df_vide.loc[p] = [1, 10, 0, 1]
+        df_vide.to_csv(fichier_cible)
+        return df_vide
+    return pd.read_csv(fichier_cible, index_col=0)
 
-# --- 4. SESSION STATE ---
-if "user_pseudo" not in st.session_state: st.session_state["user_pseudo"] = None
-if "ramadan_mode" not in st.session_state: st.session_state["ramadan_mode"] = False
+# --- 4. STYLE ---
+COLOR = "#C5A059" if st.session_state["ramadan_mode"] else "#047857"
+st.set_page_config(page_title="Bilan Coran Pro", layout="wide")
+st.markdown(f"""<style>
+    h1, h2, h3, p, label {{ color: {COLOR} !important; }}
+    div.stButton > button {{ background-color: #FFFFFF !important; color: {COLOR} !important; border: 2px solid {COLOR} !important; border-radius: 10px; font-weight: bold; width: 100%; }}
+    div.stButton > button:hover {{ background-color: {COLOR} !important; color: #FFFFFF !important; }}
+    .stProgress > div > div > div > div {{ background-color: {COLOR} !important; }}
+</style>""", unsafe_allow_html=True)
 
-HADITHS = [
-    "Le meilleur d'entre vous est celui qui apprend le Coran et l'enseigne. | Bukhari",
-    "Lisez le Coran ! Car il viendra au Jour de la Résurrection en intercesseur pour les siens. | Muslim",
-    "Celui qui récite une lettre du Livre d'Allah a pour cela une bonne action. | Tirmidhi"
-]
-
-# --- 5. AUTHENTIFICATION ---
-if st.session_state["user_pseudo"] is None:
-    st.title("🌙 Accès Bilan Coran")
-    tab1, tab2, tab3 = st.tabs(["Connexion", "Inscription", "Mdp oublié"])
-    df = charger()
-
-    with tab1: # CONNEXION PAR PSEUDO
-        ps = st.text_input("Pseudo", key="login_pseudo")
-        pw = st.text_input("Mot de passe", type="password", key="login_pw")
+# --- 5. AUTHENTIFICATION / INSCRIPTION / MDP OUBLIÉ ---
+if not st.session_state["auth"]:
+    st.title("🔐 Accès Bilan Coran")
+    tab_log, tab_reg, tab_forgot = st.tabs(["Connexion", "S'inscrire", "Mdp oublié"])
+    
+    with tab_log:
+        u_input = st.text_input("Pseudo")
+        p_input = st.text_input("Mot de passe", type="password")
         if st.button("Se connecter"):
-            user = df[(df['pseudo'] == ps) & (df['password'].astype(str) == pw)]
-            if not user.empty:
-                if user.iloc[0]['statut'] == "Validé":
-                    st.session_state["user_pseudo"] = ps
+            user_row = df_users[(df_users["pseudo"] == u_input) & (df_users["password"].astype(str) == p_input)]
+            if not user_row.empty:
+                if user_row.iloc[0]["statut"] == "Validé":
+                    st.session_state["auth"] = True
+                    st.session_state["user_connected"] = u_input
+                    st.session_state["is_admin"] = (user_row.iloc[0]["role"] == "Admin")
                     st.rerun()
-                else:
-                    st.warning("⏳ Ton compte est en attente de validation par Yael.")
-            else: st.error("Pseudo ou mot de passe incorrect.")
+                else: st.warning("⏳ Compte en attente de validation par Yael.")
+            else: st.error("Pseudo ou mot de passe incorrect")
 
-    with tab2: # INSCRIPTION
-        ne = st.text_input("Ton Email (pour les notifications)", key="reg_email")
-        np = st.text_input("Choisis un Pseudo", key="reg_pseudo")
-        nm = st.text_input("Choisis un Mot de passe", type="password", key="reg_mdp")
-        if st.button("S'inscrire"):
-            if ne and np and nm:
-                if np in df['pseudo'].values: st.error("Ce pseudo est déjà pris.")
+    with tab_reg:
+        re_e = st.text_input("Ton Email (pour les identifiants)")
+        re_p = st.text_input("Choisis un Pseudo")
+        re_m = st.text_input("Choisis un Mot de passe", type="password")
+        if st.button("Envoyer ma demande"):
+            if re_e and re_p and re_m:
+                if re_p in df_users["pseudo"].values: st.error("Pseudo déjà pris.")
                 else:
-                    new_row = pd.DataFrame([[ne, np, nm, "En attente", 1, 10, 0, 1]], 
-                                         columns=["email", "pseudo", "password", "statut", "page", "rythme", "finies", "objectif"])
-                    sauver(pd.concat([df, new_row]))
-                    st.success("Demande envoyée ! Yael va valider ton compte bientôt.")
+                    new_u = pd.DataFrame([[re_e, re_p, re_m, "Membre", "En attente"]], columns=["email", "pseudo", "password", "role", "statut"])
+                    pd.concat([df_users, new_u]).to_csv(USERS_FILE, index=False)
+                    st.success("Demande envoyée ! Yael va te valider par mail.")
             else: st.warning("Remplis tous les champs.")
 
-    with tab3: # MOT DE PASSE OUBLIÉ (VIA EMAIL)
+    with tab_forgot:
         fe = st.text_input("Email utilisé à l'inscription")
-        if st.button("Récupérer mes accès"):
-            user = df[df['email'] == fe]
+        if st.button("Récupérer mes identifiants"):
+            user = df_users[df_users["email"] == fe]
             if not user.empty:
-                corps = f"Salam,\n\nVoici tes accès :\nPseudo : {user.iloc[0]['pseudo']}\nMot de passe : {user.iloc[0]['password']}"
-                if envoyer_email(fe, "Identifiants Bilan Coran", corps):
-                    st.success("Email envoyé avec ton pseudo et mot de passe !")
-            else: st.error("Email introuvable.")
+                envoyer_email(fe, "Identifiants Coran", f"Salam,\n\nPseudo : {user.iloc[0]['pseudo']}\nMot de passe : {user.iloc[0]['password']}")
+                st.success("Email envoyé !")
+            else: st.error("Email inconnu.")
     st.stop()
 
-# --- 6. ESPACE CONNECTÉ ---
-df = charger()
-user_idx = df[df['pseudo'] == st.session_state["user_pseudo"]].index[0]
-user_data = df.loc[user_idx]
+# --- 6. CHARGEMENT DATA APRÈS CONNEXION ---
+suffixe = "ramadan" if st.session_state["ramadan_mode"] else "lecture"
+DATA_FILE = os.path.join(dossier, f"sauvegarde_{suffixe}.csv")
+df = verifier_et_creer_sauvegarde(DATA_FILE)
 
-# --- SIDEBAR & ADMIN PANEL ---
+# --- 7. BARRE LATÉRALE ---
 with st.sidebar:
-    st.header(f"👤 {user_data['pseudo']}")
+    st.title(f"Salut, {st.session_state['user_connected']} !")
+    if st.button("🏠 Accueil"): st.session_state["page_params"] = False; st.rerun()
+    if st.button("⚙️ Paramètres"): st.session_state["page_params"] = True; st.rerun()
     
-    # Bouton Mode Ramadan
-    if st.button("🌙 Mode Ramadan" if not st.session_state["ramadan_mode"] else "📖 Mode Normal"):
-        st.session_state["ramadan_mode"] = not st.session_state["ramadan_mode"]
-        st.rerun()
-
-    # PANEL ADMIN (Visible uniquement par Yael)
-    if st.session_state["user_pseudo"] == "Yael":
+    # PANEL ADMIN DANS LA SIDEBAR
+    if st.session_state["is_admin"]:
         st.divider()
         st.subheader("🛠️ Panel Admin")
-        attente = df[df['statut'] == "En attente"]
-        if not attente.empty:
-            for i, r in attente.iterrows():
-                st.write(f"Valider **{r['pseudo']}** ?")
-                if st.button(f"Confirmer {r['pseudo']}", key=f"v_{i}"):
-                    df.at[i, 'statut'] = "Validé"
-                    sauver(df)
-                    envoyer_email(r['email'], "Compte Validé !", f"Salam {r['pseudo']},\n\nYael a validé ton compte ! Tu peux te connecter.")
-                    st.rerun()
-        else: st.write("Aucune demande.")
+        attente = df_users[df_users["statut"] == "En attente"]
+        for i, r in attente.iterrows():
+            if st.button(f"✅ Valider {r['pseudo']}", key=f"v_{i}"):
+                df_users.at[i, "statut"] = "Validé"
+                df_users.to_csv(USERS_FILE, index=False)
+                # On l'ajoute aussi au fichier de lecture
+                df.loc[r["pseudo"]] = [1, 10, 0, 1]
+                df.to_csv(DATA_FILE)
+                envoyer_email(r["email"], "Compte Validé !", f"Salam {r['pseudo']}, Yael a validé ton compte ! Connecte-toi avec ton pseudo.")
+                st.rerun()
 
     st.divider()
-    if st.button("🔒 Déconnexion"):
-        st.session_state["user_pseudo"] = None
-        st.rerun()
+    btn_txt = "🌙 Mode Normal" if st.session_state["ramadan_mode"] else "🌙 Mode Ramadan"
+    if st.button(btn_txt): st.session_state["ramadan_mode"] = not st.session_state["ramadan_mode"]; st.rerun()
+    if st.button("🔒 Déconnexion"): st.session_state["auth"] = False; st.rerun()
 
-# --- 7. CONTENU PRINCIPAL ---
-st.title(f"📖 Bilan de {user_data['pseudo']}")
+# --- 8. PAGE CONFIGURATION ---
+if st.session_state["page_params"]:
+    st.title("⚙️ Configuration")
+    if st.session_state["is_admin"]:
+        st.subheader("🗑️ Supprimer un membre")
+        cible = st.selectbox("Choisir :", [p for p in df_users["pseudo"] if p != "Yael"])
+        if st.button("🗑️ Supprimer"):
+            df_users = df_users[df_users["pseudo"] != cible]
+            df_users.to_csv(USERS_FILE, index=False)
+            if cible in df.index: df = df.drop(cible); df.to_csv(DATA_FILE)
+            st.rerun()
+    else: st.info("Seul l'admin peut gérer les membres ici.")
+    st.stop()
+
+# --- 9. PAGE ACCUEIL (BILAN) ---
+st.title("🌙 Mode Ramadan Pro" if st.session_state["ramadan_mode"] else "📖 Bilan de Lecture")
+
+# Table récapitulative
+st.subheader("📊 État actuel")
+recap = df.copy()
 if st.session_state["ramadan_mode"]:
-    st.subheader("🌙 MODE RAMADAN ACTIVÉ")
-
-# MISE À JOUR
-with st.expander("📝 Mettre à jour ma progression"):
-    c1, c2 = st.columns(2)
-    p_act = c1.number_input("Page actuelle", 1, 604, int(user_data['page']))
-    r_act = c2.number_input("Rythme (pages/jour)", 1, 100, int(user_data['rythme']))
-    
-    if st.session_state["ramadan_mode"]:
-        c3, c4 = st.columns(2)
-        obj = c3.number_input("Objectif Khatmas", 1, 10, int(user_data.get('objectif', 1)))
-        fin = c4.number_input("Khatmas finies", 0, 10, int(user_data.get('finies', 0)))
-    
-    if st.button("💾 Sauvegarder"):
-        df.at[user_idx, 'page'] = p_act
-        df.at[user_idx, 'rythme'] = r_act
-        if st.session_state["ramadan_mode"]:
-            df.at[user_idx, 'objectif'] = obj
-            df.at[user_idx, 'finies'] = fin
-        sauver(df)
-        st.success("Données enregistrées !")
-        st.rerun()
-
-# PROGRESSION VISUELLE
-st.subheader("📊 Progression")
-if st.session_state["ramadan_mode"]:
-    total_a_lire = user_data['objectif'] * 604
-    lu = (user_data['page']) + (user_data['finies'] * 604)
-    prog = min(100.0, (lu / total_a_lire) * 100)
-    st.write(f"Khatma en cours : **{user_data['finies'] + 1} / {user_data['objectif']}**")
+    recap["Progression"] = (((recap["Page Actuelle"] + (recap["Cycles Finis"] * 604)) / (recap["Objectif Khatmas"] * 604)) * 100).round(1).astype(str) + "%"
 else:
-    prog = (user_data['page'] / 604) * 100
+    recap["Progression"] = (recap["Page Actuelle"] / 604 * 100).round(1).astype(str) + "%"
+st.table(recap)
 
-st.progress(prog / 100)
-st.write(f"Avancement global : **{prog:.1f}%**")
-
-# PLANNING 30 JOURS
-st.subheader("📅 Mon Planning (30 jours)")
-auj = date.today()
-jours = [(auj + timedelta(days=i)).strftime("%d/%m") for i in range(30)]
-pages_prev = []
-for i in range(30):
-    p = (int(user_data['page']) + (int(user_data['rythme']) * i))
-    p = p % 604 if p % 604 != 0 else 604
-    pages_prev.append(int(p))
-
-st.dataframe(pd.DataFrame({"Date": jours, "Page attendue": pages_prev}), use_container_width=True)
-
-# WHATSAPP & HADITH
+# Mise à jour
 st.divider()
-cw, ch = st.columns(2)
-with cw:
-    if st.button("💬 Générer message WhatsApp"):
-        msg = f"*Bilan Coran - {user_data['pseudo']}*\n📍 Page : {user_data['page']}\n🚀 Objectif demain : {(user_data['page'] + user_data['rythme']) % 604}"
-        st.text_area("Copie ce message :", msg)
-with ch:
-    if st.button("✨ Hadith du jour"):
-        st.info(random.choice(HADITHS))
+col1, col2 = st.columns(2)
+with col1:
+    with st.expander("📝 Ma mise à jour", expanded=True):
+        user_sel = st.session_state["user_connected"]
+        p_act = st.number_input("Page actuelle :", 1, 604, int(df.loc[user_sel, "Page Actuelle"]))
+        if st.session_state["ramadan_mode"]:
+            k_obj = st.number_input("Objectif Khatmas :", 1, 10, int(df.loc[user_sel, "Objectif Khatmas"]))
+            c_finis = st.number_input("Khatmas finies :", 0, 10, int(df.loc[user_sel, "Cycles Finis"]))
+            if st.button("💾 Enregistrer"):
+                df.loc[user_sel] = [p_act, df.loc[user_sel, "Rythme"], c_finis, k_obj]
+                df.to_csv(DATA_FILE); st.success("Mis à jour !"); st.rerun()
+        else:
+            r_act = st.number_input("Rythme (pages/jour) :", 1, 100, int(df.loc[user_sel, "Rythme"]))
+            if st.button("💾 Enregistrer"):
+                df.loc[user_sel, ["Page Actuelle", "Rythme"]] = [p_act, r_act]
+                df.to_csv(DATA_FILE); st.success("Mis à jour !"); st.rerun()
+
+with col2:
+    with st.expander("💬 WhatsApp"):
+        msg = f"*Bilan Coran - {st.session_state['user_connected']}*\n📍 Page : {df.loc[st.session_state['user_connected'], 'Page Actuelle']}\n🚀 Demain : {(df.loc[st.session_state['user_connected'], 'Page Actuelle'] + df.loc[st.session_state['user_connected'], 'Rythme']) % 604}"
+        st.text_area("Copier :", msg, height=120)
+
+# Planning
+st.subheader("📅 Planning 30 jours")
+plan_df = pd.DataFrame(index=[(date.today() + timedelta(days=i)).strftime("%d/%m") for i in range(30)])
+for n, r in df.iterrows():
+    plan_df[n] = [int((int(r["Page Actuelle"]) + (int(r["Rythme"]) * i)) % 604 or 1) for i in range(30)]
+st.dataframe(plan_df, use_container_width=True)
