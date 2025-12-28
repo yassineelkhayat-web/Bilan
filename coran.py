@@ -1,5 +1,5 @@
 import streamlit as st
-import pd as pd
+import pandas as pd  # Correction ici : pandas au lieu de pd
 from datetime import date, timedelta
 import os
 
@@ -25,10 +25,11 @@ init_file(USERS_FILE, ["pseudo", "password", "role"])
 init_file(DEMANDES_FILE, ["pseudo", "password"])
 init_file(FORGOT_FILE, ["pseudo"])
 
-# Bloc de secours Admin
+# Bloc de secours Admin Yael
 udb_check = pd.read_csv(USERS_FILE)
 if "Yael" not in udb_check["pseudo"].values:
-    pd.concat([udb_check, pd.DataFrame([["Yael", "Yassine05", "Admin"]], columns=["pseudo", "password", "role"])], ignore_index=True).to_csv(USERS_FILE, index=False)
+    yael_row = pd.DataFrame([["Yael", "Yassine05", "Admin"]], columns=["pseudo", "password", "role"])
+    pd.concat([udb_check, yael_row], ignore_index=True).to_csv(USERS_FILE, index=False)
 
 def charger_data():
     suffixe = "ramadan" if st.session_state["ramadan_mode"] else "lecture"
@@ -58,25 +59,25 @@ if not st.session_state["auth"]:
                 st.session_state["auth"], st.session_state["user_connected"] = True, str(u)
                 st.session_state["is_admin"] = (match.iloc[0]["role"] == "Admin")
                 st.rerun()
-            else: st.error("Pseudo ou mot de passe incorrect.")
+            else: st.error("Identifiants incorrects.")
         c1, c2 = st.columns(2)
-        if c1.button("Créer un compte"): st.session_state["view"] = "signup"; st.rerun()
+        if c1.button("S'inscrire"): st.session_state["view"] = "signup"; st.rerun()
         if c2.button("Mdp oublié ?"): st.session_state["view"] = "forgot"; st.rerun()
     elif st.session_state["view"] == "signup":
-        nu = st.text_input("Pseudo choisi")
-        np = st.text_input("Mdp choisi", type="password")
-        if st.button("Envoyer Inscription"):
+        nu = st.text_input("Nouveau Pseudo")
+        np = st.text_input("Nouveau Mdp", type="password")
+        if st.button("Envoyer la demande"):
             if nu and np:
                 ddb = pd.read_csv(DEMANDES_FILE)
                 pd.concat([ddb, pd.DataFrame([[nu, np]], columns=["pseudo", "password"])], ignore_index=True).to_csv(DEMANDES_FILE, index=False)
-                st.success("Demande transmise !"); st.session_state["view"] = "login"; st.rerun()
+                st.success("Demande envoyée !"); st.session_state["view"] = "login"; st.rerun()
     elif st.session_state["view"] == "forgot":
-        fu = st.text_input("Pseudo pour la récupération")
-        if st.button("Signaler à Yael"):
+        fu = st.text_input("Ton Pseudo")
+        if st.button("Notifier Yael"):
             fdb = pd.read_csv(FORGOT_FILE)
             if fu and fu not in fdb["pseudo"].values:
                 pd.concat([fdb, pd.DataFrame([[fu]], columns=["pseudo"])], ignore_index=True).to_csv(FORGOT_FILE, index=False)
-            st.success("Yael a été notifiée !"); st.session_state["view"] = "login"; st.rerun()
+            st.success("C'est fait !"); st.session_state["view"] = "login"; st.rerun()
         if st.button("Retour"): st.session_state["view"] = "login"; st.rerun()
     st.stop()
 
@@ -84,11 +85,11 @@ if not st.session_state["auth"]:
 df_complet = charger_data()
 auj = date.today()
 
-# Filtrage pour la confidentialité
+# Filtrage : On ne voit que soi-même, sauf pour Yael
 if st.session_state["is_admin"]:
-    df_view = df_complet # Yael voit tout
+    df_view = df_complet
 else:
-    df_view = df_complet[df_complet.index == st.session_state["user_connected"]] # Les autres voient leur ligne
+    df_view = df_complet[df_complet.index == st.session_state["user_connected"]]
 
 with st.sidebar:
     st.title(f"👤 {st.session_state['user_connected']}")
@@ -122,12 +123,12 @@ if st.session_state["page"] == "admin":
     
     fdb = pd.read_csv(FORGOT_FILE)
     for i, r in fdb.iterrows():
-        user_info = pd.read_csv(USERS_FILE)[pd.read_csv(USERS_FILE)["pseudo"] == r["pseudo"]]
+        u_db = pd.read_csv(USERS_FILE)
+        user_info = u_db[u_db["pseudo"] == r["pseudo"]]
         ancien = user_info.iloc[0]["password"] if not user_info.empty else "Inconnu"
         st.info(f"User : {r['pseudo']} | Ancien : `{ancien}`")
         nv_mdp = st.text_input("Nouveau password :", key=f"p_{i}")
-        if st.button("💾 Sauver", key=f"b_{i}"):
-            u_db = pd.read_csv(USERS_FILE)
+        if st.button("💾 Valider", key=f"b_{i}"):
             u_db.loc[u_db["pseudo"] == r["pseudo"], "password"] = nv_mdp
             u_db.to_csv(USERS_FILE, index=False)
             fdb.drop(i).to_csv(FORGOT_FILE, index=False); st.rerun()
@@ -135,9 +136,9 @@ if st.session_state["page"] == "admin":
 
 # --- PAGE ACCUEIL ---
 st.title("🌙 Bilan Ramadan" if st.session_state["ramadan_mode"] else "📖 Bilan Coran")
+st.subheader(f"Salam {st.session_state['user_connected']} ! ✨")
 
-# 1. État actuel (Filtré)
-st.subheader("📊 Mon état actuel" if not st.session_state["is_admin"] else "📊 État général")
+# 1. État actuel
 if not df_view.empty:
     st.table(df_view)
     st.divider()
@@ -167,17 +168,17 @@ if not df_view.empty:
             p_prec = st.number_input("Page à cette date", 1, 604)
             if st.button("Calculer"):
                 diff = (auj - dp).days
-                rythme_user = int(df_view.loc[st.session_state["user_connected"], "Rythme"])
+                rythme_user = int(df_view.loc[st.session_state['user_connected'], "Rythme"])
                 nouvelle = (p_prec + (rythme_user * diff)) % 604 or 1
                 df_complet.loc[st.session_state["user_connected"], "Page Actuelle"] = int(nouvelle)
                 suffixe = "ramadan" if st.session_state["ramadan_mode"] else "lecture"
                 df_complet.to_csv(os.path.join(dossier, f"sauvegarde_{suffixe}.csv")); st.rerun()
 
-    # 3. Planning (Filtré)
+    # 3. Planning
     st.subheader("📅 Mon Planning" if not st.session_state["is_admin"] else "📅 Planning du groupe")
     plan_df = pd.DataFrame(index=[(auj + timedelta(days=i)).strftime("%d/%m") for i in range(30)])
     for n, r in df_view.iterrows():
         plan_df[n] = [int((int(r["Page Actuelle"]) + (int(r["Rythme"]) * i)) % 604 or 1) for i in range(30)]
     st.dataframe(plan_df, use_container_width=True)
 else:
-    st.info("Aucune donnée pour ce profil.")
+    st.info("Utilise 'Mise à jour' pour créer ton profil.")
