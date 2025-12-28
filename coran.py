@@ -9,6 +9,7 @@ from datetime import date, timedelta
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Bilan Coran", layout="wide")
 
+# Fonction d'envoi d'email via ton Gmail
 def envoyer_email(destinataire, sujet, corps):
     try:
         expediteur = st.secrets["gmail"]["sender_email"]
@@ -24,10 +25,11 @@ def envoyer_email(destinataire, sujet, corps):
         server.send_message(msg)
         server.quit()
         return True
-    except:
+    except Exception as e:
+        st.error(f"Erreur d'envoi d'email : {e}")
         return False
 
-# --- BASE DE DONNÉES ---
+# --- BASE DE DONNÉES UTILISATEURS ---
 USERS_FILE = "users_db.csv"
 if not os.path.exists(USERS_FILE):
     pd.DataFrame(columns=["email", "pseudo", "password", "statut", "page", "rythme"]).to_csv(USERS_FILE, index=False)
@@ -35,18 +37,17 @@ if not os.path.exists(USERS_FILE):
 def charger(): return pd.read_csv(USERS_FILE)
 def sauver(df): df.to_csv(USERS_FILE, index=False)
 
-# --- AUTHENTIFICATION ---
+# --- GESTION DE LA CONNEXION ---
 if "user_email" not in st.session_state: st.session_state["user_email"] = None
 
 if st.session_state["user_email"] is None:
-    st.title("🌙 Application Coran")
-    menu = ["Connexion", "Inscription", "Mot de passe oublié"]
-    choix = st.tabs(menu)
+    st.title("🌙 Application Bilan Coran")
+    tab1, tab2, tab3 = st.tabs(["Connexion", "Inscription", "Mot de passe oublié"])
     df = charger()
 
-    with choix[0]: # CONNEXION
-        e = st.text_input("Email")
-        p = st.text_input("Mot de passe", type="password")
+    with tab1: # CONNEXION
+        e = st.text_input("Email", key="login_e")
+        p = st.text_input("Mot de passe", type="password", key="login_p")
         if st.button("Se connecter"):
             user = df[(df['email'] == e) & (df['password'].astype(str) == p)]
             if not user.empty:
@@ -54,49 +55,92 @@ if st.session_state["user_email"] is None:
                     st.session_state["user_email"] = e
                     st.rerun()
                 else:
-                    st.warning("Ton compte est en attente de confirmation par Yael.")
-            else: st.error("Identifiants incorrects.")
+                    st.warning("Ton compte est en attente de validation par Yael.")
+            else: st.error("Email ou mot de passe incorrect.")
 
-    with choix[1]: # INSCRIPTION
-        ne = st.text_input("Ton Email", key="reg_e")
-        np = st.text_input("Ton Pseudo", key="reg_p")
+    with tab2: # INSCRIPTION
+        st.subheader("Créer un compte")
+        ne = st.text_input("Email", key="reg_e")
+        np = st.text_input("Pseudo", key="reg_p")
         nm = st.text_input("Choisir un mot de passe", type="password", key="reg_m")
         if st.button("Envoyer ma demande"):
-            if ne in df['email'].values: st.error("Email déjà utilisé.")
-            else:
-                new_row = pd.DataFrame([[ne, np, nm, "En attente", 1, 10]], columns=["email", "pseudo", "password", "statut", "page", "rythme"])
-                sauver(pd.concat([df, new_row]))
-                st.success("Demande envoyée ! Yael va confirmer ton inscription.")
+            if ne and np and nm:
+                if ne in df['email'].values:
+                    st.error("Cet email est déjà utilisé.")
+                else:
+                    new_row = pd.DataFrame([[ne, np, nm, "En attente", 1, 10]], columns=["email", "pseudo", "password", "statut", "page", "rythme"])
+                    sauver(pd.concat([df, new_row]))
+                    st.success("Demande envoyée ! Yael va confirmer ton inscription par mail.")
+            else: st.warning("Veuillez remplir tous les champs.")
 
-    with choix[2]: # MOT DE PASSE OUBLIÉ
+    with tab3: # MOT DE PASSE OUBLIÉ
         fe = st.text_input("Email de récupération")
         if st.button("Recevoir mon mot de passe"):
             user = df[df['email'] == fe]
             if not user.empty:
-                envoyer_email(fe, "Récupération Coran", f"Salam, ton mot de passe est : {user.iloc[0]['password']}")
-                st.success("Email envoyé !")
+                mdp = user.iloc[0]['password']
+                sujet = "Récupération de ton mot de passe Coran"
+                corps = f"Salam,\n\nVoici ton mot de passe pour l'application : {mdp}"
+                if envoyer_email(fe, sujet, corps):
+                    st.success("Email envoyé ! Vérifie ta boîte de réception.")
+            else: st.error("Email inconnu dans notre base.")
     st.stop()
 
-# --- ESPACE CONNECTÉ ---
+# --- ESPACE UTILISATEUR CONNECTÉ ---
 df = charger()
-user_data = df[df['email'] == st.session_state["user_email"]].iloc[0]
+user_idx = df[df['email'] == st.session_state["user_email"]].index[0]
+user_data = df.loc[user_idx]
 
-# PANEL ADMIN POUR TOI (YAEL)
-if st.session_state["user_email"] == st.secrets["gmail"]["sender_email"]:
-    with st.sidebar:
+# SIDEBAR AVEC PANEL ADMIN POUR YAEL
+with st.sidebar:
+    st.header(f"👤 {user_data['pseudo']}")
+    
+    # Si c'est TOI (l'admin)
+    if st.session_state["user_email"] == st.secrets["gmail"]["sender_email"]:
+        st.divider()
         st.subheader("🛠️ Panel Admin (Yael)")
         attente = df[df['statut'] == "En attente"]
-        for i, r in attente.iterrows():
-            st.write(f"Inscrire {r['pseudo']} ?")
-            if st.button(f"Confirmer {r['pseudo']}", key=f"conf_{i}"):
-                df.at[i, 'statut'] = "Validé"
-                sauver(df)
-                envoyer_email(r['email'], "Inscription Confirmée !", f"Salam {r['pseudo']}, Yael a validé ton compte ! Tu peux maintenant te connecter.")
-                st.rerun()
+        if not attente.empty:
+            for i, r in attente.iterrows():
+                st.write(f"Inscrire : **{r['pseudo']}**")
+                if st.button(f"Confirmer {r['pseudo']}", key=f"conf_{i}"):
+                    df.at[i, 'statut'] = "Validé"
+                    sauver(df)
+                    envoyer_email(r['email'], "Inscription Confirmée !", f"Salam {r['pseudo']},\n\nYael a validé ton compte ! Tu peux maintenant te connecter à l'application.")
+                    st.success(f"Compte de {r['pseudo']} validé !")
+                    st.rerun()
+        else:
+            st.write("Aucune inscription en attente.")
 
-# --- RESTE DE L'APP (PLANNING, ETC) ---
+    st.divider()
+    if st.button("🔒 Déconnexion"):
+        st.session_state["user_email"] = None
+        st.rerun()
+
+# --- CONTENU DE L'APP (BILAN) ---
 st.title(f"📖 Bilan de {user_data['pseudo']}")
-# (Ajoute ici ton code de planning et progression...)
-if st.button("Déconnexion"):
-    st.session_state["user_email"] = None
-    st.rerun()
+
+# Mise à jour progression
+with st.expander("📝 Mettre à jour ma progression"):
+    c1, c2 = st.columns(2)
+    new_p = c1.number_input("Page actuelle", 1, 604, int(user_data['page']))
+    new_r = c2.number_input("Rythme (pages/jour)", 1, 100, int(user_data['rythme']))
+    if st.button("💾 Sauvegarder"):
+        df.at[user_idx, 'page'] = new_p
+        df.at[user_idx, 'rythme'] = new_r
+        sauver(df)
+        st.success("Données enregistrées !")
+        st.rerun()
+
+# Planning 30 jours
+st.subheader("📅 Mon Planning")
+auj = date.today()
+jours = [(auj + timedelta(days=i)).strftime("%d/%m") for i in range(30)]
+pages = [(int(user_data['page']) + (int(user_data['rythme']) * i)) % 604 or 1 for i in range(30)]
+df_plan = pd.DataFrame({"Date": jours, "Page attendue": pages})
+st.dataframe(df_plan, use_container_width=True)
+
+# WhatsApp
+if st.button("💬 WhatsApp"):
+    msg = f"*Bilan Coran*\n👤 {user_data['pseudo']}\n📍 Page actuelle : {user_data['page']}\n🚀 Demain : {(user_data['page']+user_data['rythme'])%604}"
+    st.text_area("Copier :", msg)
