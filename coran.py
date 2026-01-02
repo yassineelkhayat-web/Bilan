@@ -3,7 +3,21 @@ import pandas as pd
 from datetime import date, timedelta
 import os
 import random
-import requests # Nécessaire pour envoyer l'alerte mail
+import requests # Nécessaire pour Formspree
+
+# --- CONFIGURATION NOTIFICATION ---
+URL_FORMSPREE = "https://formspree.io/f/xrebqybk"
+
+def envoyer_alerte_mail(pseudo, type_alerte="Inscription"):
+    donnees = {
+        "Objet": f"🔔 Alerte Bilan Coran : {type_alerte}",
+        "Utilisateur": pseudo,
+        "Message": f"Salam Yael, l'utilisateur '{pseudo}' a envoyé une demande de type : {type_alerte}."
+    }
+    try:
+        requests.post(URL_FORMSPREE, data=donnees)
+    except:
+        pass
 
 # --- 1. CONFIGURATION ---
 if "auth" not in st.session_state: st.session_state["auth"] = False
@@ -14,20 +28,6 @@ if "langue" not in st.session_state: st.session_state["langue"] = "Français"
 if "page" not in st.session_state: st.session_state["page"] = "home"
 if "view" not in st.session_state: st.session_state["view"] = "login"
 
-# --- CONFIGURATION ALERTE MAIL (FORMSPREE) ---
-URL_FORMSPREE = "https://formspree.io/f/xrebqybk"
-
-def envoyer_alerte_mail(pseudo):
-    donnees = {
-        "sujet": "🔔 Nouvelle inscription sur Bilan Coran",
-        "utilisateur": pseudo,
-        "message": f"Salam Yael, l'utilisateur '{pseudo}' attend sa validation pour accéder à l'application."
-    }
-    try:
-        requests.post(URL_FORMSPREE, data=donnees)
-    except:
-        pass # Évite de faire planter l'app si le réseau échoue
-
 # --- 2. GESTION DES FICHIERS ---
 dossier = os.path.dirname(__file__)
 USERS_FILE = os.path.join(dossier, "users.csv")
@@ -35,11 +35,8 @@ DEMANDES_FILE = os.path.join(dossier, "demandes.csv")
 FORGOT_FILE = os.path.join(dossier, "forgot.csv")
 
 def init_file(file, columns):
-    if not os.path.exists(file):
+    if not os.path.exists(file) or os.stat(file).st_size == 0:
         pd.DataFrame(columns=columns).to_csv(file, index=False)
-    else:
-        if os.stat(file).st_size == 0:
-            pd.DataFrame(columns=columns).to_csv(file, index=False)
 
 init_file(USERS_FILE, ["pseudo", "password", "role"])
 init_file(DEMANDES_FILE, ["pseudo", "password"])
@@ -107,11 +104,8 @@ if not st.session_state["auth"]:
             if nu and np:
                 ddb = pd.read_csv(DEMANDES_FILE)
                 pd.concat([ddb, pd.DataFrame([[nu, np]], columns=["pseudo", "password"])], ignore_index=True).to_csv(DEMANDES_FILE, index=False)
-                
-                # --- ENVOI DE L'ALERTE MAIL ---
-                envoyer_alerte_mail(nu)
-                
-                st.success("C'est envoyé ! Tu recevras un mail de confirmation après validation."); st.session_state["view"] = "login"; st.rerun()
+                envoyer_alerte_mail(nu, "Nouvelle Inscription") # Notif Email
+                st.success("C'est envoyé !"); st.session_state["view"] = "login"; st.rerun()
         if st.button("Retour"): st.session_state["view"] = "login"; st.rerun()
     elif st.session_state["view"] == "forgot":
         fu = st.text_input("Entre ton Pseudo")
@@ -119,10 +113,7 @@ if not st.session_state["auth"]:
             fdb = pd.read_csv(FORGOT_FILE)
             if fu and fu not in fdb["pseudo"].values:
                 pd.concat([fdb, pd.DataFrame([[fu]], columns=["pseudo"])], ignore_index=True).to_csv(FORGOT_FILE, index=False)
-            
-            # Optionnel: Tu peux aussi envoyer un mail pour les oublis de MDP
-            envoyer_alerte_mail(f"MOT DE PASSE OUBLIÉ : {fu}")
-            
+                envoyer_alerte_mail(fu, "Mot de passe oublié") # Notif Email
             st.success("Demande transmise à Yael !"); st.session_state["view"] = "login"; st.rerun()
         if st.button("Retour"): st.session_state["view"] = "login"; st.rerun()
     st.stop()
@@ -138,12 +129,135 @@ with st.sidebar:
     if st.button(L["params"]): st.session_state["page"] = "params"; st.rerun()
     if st.session_state["is_admin"]:
         nb = len(pd.read_csv(DEMANDES_FILE)) + len(pd.read_csv(FORGOT_FILE))
-        if st.button(f"{L['admin']} ({nb})"): st.session_state["page"] = "admin"; st.rerun()
+        # Alerte visuelle sur le bouton admin si nb > 0
+        label_admin = f"🔴 {L['admin']} ({nb})" if nb > 0 else f"{L['admin']} ({nb})"
+        if st.button(label_admin): st.session_state["page"] = "admin"; st.rerun()
     st.divider()
     m_label = "📖 Mode Normal" if st.session_state["ramadan_mode"] else "🌙 Mode Ramadan"
     if st.button(m_label):
         st.session_state["ramadan_mode"] = not st.session_state["ramadan_mode"]; st.rerun()
     if st.button(L["logout"]): st.session_state["auth"] = False; st.rerun()
 
-# (Le reste de ton code original pour les pages Params, Admin et Accueil continue ici...)
-# ...
+# --- PAGE PARAMÈTRES ---
+if st.session_state["page"] == "params":
+    st.title(L["params"])
+    new_l = st.selectbox("Langue / اللغة", ["Français", "العربية"], index=0 if st.session_state["langue"]=="Français" else 1)
+    if new_l != st.session_state["langue"]: st.session_state["langue"] = new_l; st.rerun()
+    st.stop()
+
+# --- PAGE ADMIN ---
+if st.session_state["page"] == "admin":
+    st.title("🔔 Administration")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.subheader("📝 Inscriptions")
+        ddb = pd.read_csv(DEMANDES_FILE)
+        for i, r in ddb.iterrows():
+            st.info(f"**{r['pseudo']}**")
+            c1, c2 = st.columns(2)
+            if c1.button("✅ Accepter", key=f"a_{i}"):
+                udb = pd.read_csv(USERS_FILE)
+                pd.concat([udb, pd.DataFrame([[r['pseudo'], r['password'], "Membre"]], columns=["pseudo", "password", "role"])], ignore_index=True).to_csv(USERS_FILE, index=False)
+                for m in ["lecture", "ramadan"]:
+                    f = os.path.join(dossier, f"sauvegarde_{m}.csv")
+                    temp = pd.read_csv(f, index_col=0) if os.path.exists(f) else pd.DataFrame(columns=["Page Actuelle", "Rythme", "Cycles Finis", "Objectif Khatmas"], index=["Nom"])
+                    temp.loc[r['pseudo']] = [1, 10, 0, 1]
+                    temp.to_csv(f)
+                ddb.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
+            if c2.button("❌ Refuser", key=f"r_{i}"): ddb.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
+
+    with col_b:
+        st.subheader("🔑 Mdp Oubliés")
+        fdb = pd.read_csv(FORGOT_FILE)
+        for i, r in fdb.iterrows():
+            udb = pd.read_csv(USERS_FILE)
+            anc = udb[udb["pseudo"]==r["pseudo"]].iloc[0]["password"] if r["pseudo"] in udb["pseudo"].values else "Inconnu"
+            st.warning(f"**{r['pseudo']}**")
+            st.write(f"Ancien : `{anc}`")
+            nv = st.text_input("Nouveau MDP", key=f"nv_{i}")
+            if st.button("Enregistrer", key=f"s_{i}"):
+                if nv:
+                    udb.loc[udb["pseudo"]==r["pseudo"], "password"] = nv
+                    udb.to_csv(USERS_FILE, index=False); fdb.drop(i).to_csv(FORGOT_FILE, index=False); st.rerun()
+
+    if st.session_state["user_connected"] == "Yael":
+        st.divider()
+        st.subheader("👥 Gestion des Membres")
+        udb_list = pd.read_csv(USERS_FILE)
+        for i, row in udb_list.iterrows():
+            if row["pseudo"] == "Yael": continue
+            c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
+            c1.write(f"**{row['pseudo']}**")
+            show_key = f"show_{row['pseudo']}"
+            if show_key not in st.session_state: st.session_state[show_key] = False
+            mdp_display = row['password'] if st.session_state[show_key] else "********"
+            c2.code(mdp_display, language=None)
+            if c3.button("👁️", key=f"eye_{i}"):
+                st.session_state[show_key] = not st.session_state[show_key]; st.rerun()
+            if c4.button("🚫", key=f"ban_{i}"):
+                udb_list.drop(i).to_csv(USERS_FILE, index=False)
+                for m in ["lecture", "ramadan"]:
+                    f_path = os.path.join(dossier, f"sauvegarde_{m}.csv")
+                    if os.path.exists(f_path):
+                        temp_df = pd.read_csv(f_path, index_col=0)
+                        if row['pseudo'] in temp_df.index: temp_df.drop(row['pseudo']).to_csv(f_path)
+                st.rerun()
+    st.stop()
+
+# --- PAGE ACCUEIL ---
+st.title(L["titre_ram"] if st.session_state["ramadan_mode"] else L["titre_norm"])
+
+if st.session_state["user_connected"] == "Yael":
+    if st.button(L["hadith_btn"]):
+        h_file = "hadiths_fr.txt" if st.session_state["langue"] == "Français" else "hadiths_ar.txt"
+        if os.path.exists(os.path.join(dossier, h_file)):
+            with open(os.path.join(dossier, h_file), "r", encoding="utf-8") as f:
+                lignes = f.readlines()
+                if lignes: st.info(random.choice(lignes))
+
+st.subheader(L["etat"])
+if not df_view.empty:
+    st.table(df_view)
+    with st.expander(L["prog"]):
+        for n, r in df_view.iterrows():
+            total = r["Objectif Khatmas"] * 604 if st.session_state["ramadan_mode"] else 604
+            fait = (r["Page Actuelle"] + (r["Cycles Finis"] * 604)) if st.session_state["ramadan_mode"] else r["Page Actuelle"]
+            st.write(f"**{n}**")
+            st.progress(min(1.0, fait/total))
+    st.divider()
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.session_state["user_connected"] == "Yael":
+            with st.expander(L["wa"]):
+                dc = st.date_input("Échéance", auj + timedelta(days=1))
+                msg = f"*Bilan {dc.strftime('%d/%m')}* :\n"
+                for n, r in df_view.iterrows():
+                    p = (int(r["Page Actuelle"]) + (int(r["Rythme"]) * (dc - auj).days)) % 604 or 1
+                    msg += f"• *{n.upper()}* : p.{int(p)}\n"
+                st.text_area("Copier :", msg)
+        else: st.info("Outils Admin réservés")
+    with c2:
+        with st.expander(L["maj"]):
+            u_sel = st.selectbox("Qui ?", df_view.index)
+            np = st.number_input("Page", 1, 604, int(df_view.loc[u_sel, "Page Actuelle"]))
+            nr = st.number_input("Rythme", 1, 100, int(df_view.loc[u_sel, "Rythme"]))
+            if st.button("💾 Sauvegarder"):
+                df_complet.loc[u_sel, ["Page Actuelle", "Rythme"]] = [np, nr]
+                suf = "ramadan" if st.session_state["ramadan_mode"] else "lecture"
+                df_complet.to_csv(os.path.join(dossier, f"sauvegarde_{suf}.csv")); st.rerun()
+    with c3:
+        with st.expander(L["calc"]):
+            dp = st.date_input("Date cible", auj)
+            p_prec = st.number_input("Page à cette date", 1, 604)
+            if st.button("🔄 Recalculer"):
+                diff = (auj - dp).days
+                rythme = int(df_view.loc[st.session_state['user_connected'], "Rythme"])
+                nouvelle = (p_prec + (rythme * diff)) % 604 or 1
+                df_complet.loc[st.session_state["user_connected"], "Page Actuelle"] = int(nouvelle)
+                suf = "ramadan" if st.session_state["ramadan_mode"] else "lecture"
+                df_complet.to_csv(os.path.join(dossier, f"sauvegarde_{suf}.csv")); st.rerun()
+    st.subheader(L["plan"])
+    plan_df = pd.DataFrame(index=[(auj + timedelta(days=i)).strftime("%d/%m") for i in range(30)])
+    for n, r in df_view.iterrows():
+        plan_df[n] = [int((int(r["Page Actuelle"]) + (int(r["Rythme"]) * i)) % 604 or 1) for i in range(30)]
+    st.dataframe(plan_df, use_container_width=True)
