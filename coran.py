@@ -10,11 +10,11 @@ EMAILJS_SERVICE_ID = "service_v9ebnic"
 EMAILJS_TEMPLATE_ID = "template_rghkouc"
 EMAILJS_PUBLIC_KEY = "LUCKx4YnQSQ3ncrue"
 EMAILJS_PRIVATE_KEY = "xnNMOnkv8TSM6N_fK9TCR"
-FORMSPREE_URL = "https://formspree.io/f/mnpkenre" # URL Formspree pour les inscriptions
+FORMSPREE_URL = "https://formspree.io/f/mnpkenre"
 
 def envoyer_email_code(pseudo, email_dest, code_ou_msg):
-    # Correction : On ajoute un préfixe au message pour que tu puisses filtrer tes mails
-    sujet = "[ALERTE SÉCURITÉ]" if str(code_ou_msg).isdigit() else "[INFO COMPTE]"
+    # Ajout d'un sujet pour éviter le mélange des messages dans EmailJS
+    sujet = "[SÉCURITÉ]" if str(code_ou_msg).isdigit() else "[INFO]"
     url = "https://api.emailjs.com/api/v1.0/email/send"
     payload = {
         "service_id": EMAILJS_SERVICE_ID,
@@ -24,10 +24,10 @@ def envoyer_email_code(pseudo, email_dest, code_ou_msg):
         "template_params": {
             "to_name": pseudo,
             "user_email": email_dest,
-            "message": f"{sujet} : {code_ou_msg}"
+            "message": f"{sujet} {code_ou_msg}"
         }
     }
-    try: requests.post(url, json=payload)
+    try: requests.post(url, json=payload, timeout=10)
     except: pass
 
 # --- 2. GESTION DES FICHIERS ---
@@ -40,7 +40,7 @@ SAUV_LECTURE = os.path.join(dossier, "sauvegarde_lecture.csv")
 SAUV_RAMADAN = os.path.join(dossier, "sauvegarde_ramadan.csv")
 
 def init_file(file, columns):
-    # Correction : On vérifie plus strictement pour ne JAMAIS écraser les données existantes
+    # Sécurité : on n'écrase que si le fichier est vraiment inexistant ou vide
     if not os.path.exists(file) or os.stat(file).st_size < 10:
         pd.DataFrame(columns=columns).to_csv(file, index=False)
 
@@ -51,7 +51,7 @@ if not os.path.exists(CODES_FILE):
     with open(CODES_FILE, "w") as f:
         for _ in range(1000): f.write(str(random.randint(100000, 999999)) + "\n")
 
-# Sécurité Admin par défaut
+# Sécurité Admin par défaut (chargement sans perte)
 udb_init = pd.read_csv(USERS_FILE)
 if "Yael" not in udb_init["pseudo"].values:
     admin_row = pd.DataFrame([["yassine.elkhayat@isv.be", "Yael", "Yassine05", "Admin"]], columns=["email", "pseudo", "password", "role"])
@@ -118,7 +118,6 @@ st.set_page_config(page_title="Bilan Coran", layout="wide")
 st.markdown(f"<style>h1,h2,h3,p,label,span{{color:{COLOR}!important; text-align:center;}} div.stButton>button{{width:100%; border:2px solid {COLOR}; color:{COLOR}; border-radius:10px; font-weight:bold;}}</style>", unsafe_allow_html=True)
 
 # --- 5. CHARGEMENT DATA ---
-suffixe = "ramadan" if st.session_state["ramadan_mode"] else "lecture"
 DATA_FILE = SAUV_RAMADAN if st.session_state["ramadan_mode"] else SAUV_LECTURE
 df = verifier_et_creer_sauvegarde(DATA_FILE)
 
@@ -138,7 +137,6 @@ if not st.session_state["auth"]:
         c1, c2 = st.columns(2)
         if c1.button(L["btn_signup"]): st.session_state["view"] = "signup"; st.rerun()
         if c2.button(L["btn_forgot"]): st.session_state["view"] = "forgot"; st.session_state["reset_step"] = 1; st.rerun()
-    
     elif st.session_state["view"] == "forgot":
         st.subheader("Réinitialisation")
         if st.session_state["reset_step"] == 1:
@@ -149,7 +147,7 @@ if not st.session_state["auth"]:
                     with open(CODES_FILE, "r") as f: codes = f.read().splitlines()
                     code = random.choice(codes)
                     st.session_state.update({"temp_code": code, "temp_email": fe, "reset_step": 2})
-                    envoyer_email_code(db[db["email"]==fe]["pseudo"].values[0], fe, f"Code de réinitialisation : {code}")
+                    envoyer_email_code(db[db["email"]==fe]["pseudo"].values[0], fe, f"CODE : {code}")
                     st.rerun()
                 else: st.error("Email inconnu.")
         elif st.session_state["reset_step"] == 2:
@@ -163,7 +161,6 @@ if not st.session_state["auth"]:
                 db = pd.read_csv(USERS_FILE); db.loc[db["email"] == st.session_state["temp_email"], "password"] = np
                 db.to_csv(USERS_FILE, index=False); st.session_state["view"] = "login"; st.rerun()
         if st.button("Retour"): st.session_state["view"] = "login"; st.rerun()
-    
     elif st.session_state["view"] == "signup":
         st.title("📝 Inscription")
         ne, nu, np = st.text_input("Email"), st.text_input("Pseudo"), st.text_input("Mot de passe", type="password")
@@ -171,14 +168,25 @@ if not st.session_state["auth"]:
             if ne and nu and np:
                 ddb = pd.read_csv(DEMANDES_FILE)
                 pd.concat([ddb, pd.DataFrame([[ne, nu, np]], columns=["email", "pseudo", "password"])], ignore_index=True).to_csv(DEMANDES_FILE, index=False)
-                # --- FORMSPREE POUR L'ADMIN ---
-                try: requests.post(FORMSPREE_URL, data={"Inscription": nu, "Email": ne})
+                try: requests.post(FORMSPREE_URL, data={"inscription": nu, "email": ne})
                 except: pass
-                # --- EMAILJS POUR L'ADMIN (AVEC SUJET CLAIR) ---
-                envoyer_email_code("Yael", "yassine.elkhayat@isv.be", f"NOUVELLE INSCRIPTION : {nu} ({ne}).")
+                envoyer_email_code("Yael", "yassine.elkhayat@isv.be", f"Demande : {nu} ({ne})")
                 st.success("Demande envoyée !"); st.session_state["view"] = "login"; st.rerun()
         if st.button("Retour"): st.session_state["view"] = "login"; st.rerun()
     st.stop()
+
+# --- 8. SIDEBAR (PLACÉE ICI POUR NE PAS ÊTRE BLOQUÉE) ---
+with st.sidebar:
+    st.header(f"👤 {st.session_state['user_connected']}")
+    if st.button(L["home_btn"]): st.session_state["page_params"] = False; st.rerun()
+    if st.button(L["params"]): st.session_state["page_params"] = "settings"; st.rerun()
+    if st.session_state["is_admin"]:
+        nb_n = len(pd.read_csv(DEMANDES_FILE))
+        if st.button(f"{L['notif']} ({nb_n})"): st.session_state["page_params"] = "notif"; st.rerun()
+    st.divider()
+    if st.button(L["mode_norm_btn"] if st.session_state["ramadan_mode"] else L["mode_ram_btn"]):
+        st.session_state["ramadan_mode"] = not st.session_state["ramadan_mode"]; st.rerun()
+    if st.button(L["btn_logout"]): st.session_state["auth"] = False; st.rerun()
 
 # --- 7. PANEL ADMIN ---
 if st.session_state["page_params"] == "notif" and st.session_state["is_admin"]:
@@ -195,12 +203,10 @@ if st.session_state["page_params"] == "notif" and st.session_state["is_admin"]:
                 tmp_df = verifier_et_creer_sauvegarde(f)
                 tmp_df.loc[r['pseudo']] = [1, 10, 0, 1]
                 tmp_df.to_csv(f)
-            # Correction : Email de validation séparé
-            envoyer_email_code(r['pseudo'], r['email'], "COMPTE VALIDÉ : Bienvenue sur l'application !")
+            envoyer_email_code(r['pseudo'], r['email'], "Validé !")
             ddb.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
         if c3.button("❌ Refuser", key=f"no_{i}"):
             ddb.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
-    
     st.divider()
     st.subheader("Gestion des Membres")
     udb = pd.read_csv(USERS_FILE)
@@ -216,19 +222,6 @@ if st.session_state["page_params"] == "notif" and st.session_state["is_admin"]:
                     if r['pseudo'] in tmp.index: tmp.drop(index=r['pseudo']).to_csv(f)
             st.rerun()
     st.stop()
-
-# --- 8. SIDEBAR ---
-with st.sidebar:
-    st.header(f"👤 {st.session_state['user_connected']}")
-    if st.button(L["home_btn"]): st.session_state["page_params"] = False; st.rerun()
-    if st.button(L["params"]): st.session_state["page_params"] = "settings"; st.rerun()
-    if st.session_state["is_admin"]:
-        nb_n = len(pd.read_csv(DEMANDES_FILE))
-        if st.button(f"{L['notif']} ({nb_n})"): st.session_state["page_params"] = "notif"; st.rerun()
-    st.divider()
-    if st.button(L["mode_norm_btn"] if st.session_state["ramadan_mode"] else L["mode_ram_btn"]):
-        st.session_state["ramadan_mode"] = not st.session_state["ramadan_mode"]; st.rerun()
-    if st.button(L["btn_logout"]): st.session_state["auth"] = False; st.rerun()
 
 # --- 10. SETTINGS ---
 if st.session_state["page_params"] == "settings":
@@ -266,11 +259,9 @@ if not view_df.empty:
     recap = view_df.copy()
     recap[L["col_prog"]] = (recap["Page Actuelle"] / 604 * 100).round(1).astype(str) + "%"
     st.table(recap)
-
     with st.expander(L["view_prog"]):
         for n, r in view_df.iterrows():
             st.write(f"**{n}**"); st.progress(min(1.0, r["Page Actuelle"]/604))
-
     st.divider()
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -305,7 +296,6 @@ if not view_df.empty:
                 delt = (auj - da).days
                 np = (pda + (int(df.loc[ua, "Rythme"]) * delt)) % 604 or 1
                 df.loc[ua, "Page Actuelle"] = int(np); df.to_csv(DATA_FILE); st.rerun()
-
     st.subheader(L["plan"])
     plan_df = pd.DataFrame(index=[(auj + timedelta(days=i)).strftime("%d/%m") for i in range(30)])
     for n, r in view_df.iterrows():
