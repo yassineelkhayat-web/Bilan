@@ -20,14 +20,19 @@ DEMANDES_FILE = os.path.join(dossier, "demandes.csv")
 FORGOT_FILE = os.path.join(dossier, "forgot.csv")
 
 def init_file(file, columns):
-    if not os.path.exists(file) or os.stat(file).st_size == 0:
+    # On ne crée le fichier QUE s'il n'existe absolument pas
+    if not os.path.exists(file):
         pd.DataFrame(columns=columns).to_csv(file, index=False)
+    else:
+        # Si le fichier existe mais est vide (0 octet), on met les colonnes
+        if os.stat(file).st_size == 0:
+            pd.DataFrame(columns=columns).to_csv(file, index=False)
 
 init_file(USERS_FILE, ["pseudo", "password", "role"])
 init_file(DEMANDES_FILE, ["pseudo", "password"])
 init_file(FORGOT_FILE, ["pseudo"])
 
-# Bloc de secours Admin Yael
+# Bloc de secours Admin Yael - Protection contre l'écrasement
 udb_check = pd.read_csv(USERS_FILE)
 if "Yael" not in udb_check["pseudo"].values:
     yael_row = pd.DataFrame([["Yael", "Yassine05", "Admin"]], columns=["pseudo", "password", "role"])
@@ -130,7 +135,6 @@ if st.session_state["page"] == "params":
 if st.session_state["page"] == "admin":
     st.title("🔔 Administration")
     
-    # Section Demandes & Mots de passe oubliés
     col_a, col_b = st.columns(2)
     with col_a:
         st.subheader("Inscriptions")
@@ -161,47 +165,33 @@ if st.session_state["page"] == "admin":
                 udb.loc[udb["pseudo"]==r["pseudo"], "password"] = nv
                 udb.to_csv(USERS_FILE, index=False); fdb.drop(i).to_csv(FORGOT_FILE, index=False); st.rerun()
 
-    # --- SECTION GESTION MEMBRES (YAEL SEULEMENT) ---
     if st.session_state["user_connected"] == "Yael":
         st.divider()
         st.subheader("👥 Gestion des Membres")
         udb_list = pd.read_csv(USERS_FILE)
-        
         for i, row in udb_list.iterrows():
-            if row["pseudo"] == "Yael": continue # Ne pas se bannir soi-même
-            
+            if row["pseudo"] == "Yael": continue
             c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
             c1.write(f"**{row['pseudo']}**")
-            
-            # Système d'oeil pour le MDP
             show_key = f"show_{row['pseudo']}"
             if show_key not in st.session_state: st.session_state[show_key] = False
-            
             mdp_display = row['password'] if st.session_state[show_key] else "********"
             c2.code(mdp_display, language=None)
-            
             if c3.button("👁️", key=f"eye_{i}"):
-                st.session_state[show_key] = not st.session_state[show_key]
-                st.rerun()
-                
+                st.session_state[show_key] = not st.session_state[show_key]; st.rerun()
             if c4.button("🚫", key=f"ban_{i}"):
-                # Supprimer des utilisateurs
                 udb_list.drop(i).to_csv(USERS_FILE, index=False)
-                # Supprimer de toutes les sauvegardes
                 for m in ["lecture", "ramadan"]:
                     f_path = os.path.join(dossier, f"sauvegarde_{m}.csv")
                     if os.path.exists(f_path):
                         temp_df = pd.read_csv(f_path, index_col=0)
-                        if row['pseudo'] in temp_df.index:
-                            temp_df.drop(row['pseudo']).to_csv(f_path)
-                st.error(f"{row['pseudo']} banni !")
+                        if row['pseudo'] in temp_df.index: temp_df.drop(row['pseudo']).to_csv(f_path)
                 st.rerun()
     st.stop()
 
 # --- PAGE ACCUEIL ---
 st.title(L["titre_ram"] if st.session_state["ramadan_mode"] else L["titre_norm"])
 
-# Hadith - RESTREINT À YAEL
 if st.session_state["user_connected"] == "Yael":
     if st.button(L["hadith_btn"]):
         h_file = "hadiths_fr.txt" if st.session_state["langue"] == "Français" else "hadiths_ar.txt"
@@ -210,25 +200,18 @@ if st.session_state["user_connected"] == "Yael":
                 lignes = f.readlines()
                 if lignes: st.info(random.choice(lignes))
 
-# 1. Tableau État Actuel
 st.subheader(L["etat"])
 if not df_view.empty:
     st.table(df_view)
-
-    # 2. Progression Visuelle
     with st.expander(L["prog"]):
         for n, r in df_view.iterrows():
             total = r["Objectif Khatmas"] * 604 if st.session_state["ramadan_mode"] else 604
             fait = (r["Page Actuelle"] + (r["Cycles Finis"] * 604)) if st.session_state["ramadan_mode"] else r["Page Actuelle"]
             st.write(f"**{n}**")
             st.progress(min(1.0, fait/total))
-
     st.divider()
-
-    # 3. Outils (3 colonnes)
     c1, c2, c3 = st.columns(3)
     with c1:
-        # WhatsApp - RESTREINT À YAEL
         if st.session_state["user_connected"] == "Yael":
             with st.expander(L["wa"]):
                 dc = st.date_input("Échéance", auj + timedelta(days=1))
@@ -237,9 +220,7 @@ if not df_view.empty:
                     p = (int(r["Page Actuelle"]) + (int(r["Rythme"]) * (dc - auj).days)) % 604 or 1
                     msg += f"• *{n.upper()}* : p.{int(p)}\n"
                 st.text_area("Copier :", msg)
-        else:
-            st.info("Outils Admin (WA) réservés")
-            
+        else: st.info("Outils Admin (WA) réservés")
     with c2:
         with st.expander(L["maj"]):
             u_sel = st.selectbox("Qui ?", df_view.index)
@@ -260,8 +241,6 @@ if not df_view.empty:
                 df_complet.loc[st.session_state["user_connected"], "Page Actuelle"] = int(nouvelle)
                 suf = "ramadan" if st.session_state["ramadan_mode"] else "lecture"
                 df_complet.to_csv(os.path.join(dossier, f"sauvegarde_{suf}.csv")); st.rerun()
-
-    # 4. Planning
     st.subheader(L["plan"])
     plan_df = pd.DataFrame(index=[(auj + timedelta(days=i)).strftime("%d/%m") for i in range(30)])
     for n, r in df_view.iterrows():
