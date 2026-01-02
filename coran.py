@@ -10,10 +10,10 @@ EMAILJS_SERVICE_ID = "service_v9ebnic"
 EMAILJS_TEMPLATE_ID = "template_rghkouc"
 EMAILJS_PUBLIC_KEY = "LUCKx4YnQSQ3ncrue"
 EMAILJS_PRIVATE_KEY = "xnNMOnkv8TSM6N_fK9TCR"
-FORMSPREE_URL = "https://formspree.io/f/mnpkenre" # Ton URL Formspree
+FORMSPREE_URL = "https://formspree.io/f/mnpkenre"
 
-def envoyer_email_code(pseudo, email_dest, code_ou_msg):
-    """Utilisé uniquement pour les codes de récupération mdp"""
+def envoyer_email_code(pseudo, email_dest, code):
+    """Utilisé uniquement pour le Mot de passe oublié via EmailJS"""
     url = "https://api.emailjs.com/api/v1.0/email/send"
     payload = {
         "service_id": EMAILJS_SERVICE_ID,
@@ -23,15 +23,15 @@ def envoyer_email_code(pseudo, email_dest, code_ou_msg):
         "template_params": {
             "to_name": pseudo,
             "user_email": email_dest,
-            "message": f"Voici votre code de sécurité : {code_ou_msg}. Ne le partagez pas."
+            "message": f"Voici votre CODE DE RÉCUPÉRATION : {code}"
         }
     }
     try: requests.post(url, json=payload, timeout=10)
     except: pass
 
 def envoyer_formspree_inscription(pseudo, email):
-    """Utilisé pour notifier l'admin via Formspree"""
-    try: requests.post(FORMSPREE_URL, data={"objet": "Nouveue Inscription", "pseudo": pseudo, "email": email}, timeout=10)
+    """Utilisé pour les inscriptions (Formspree)"""
+    try: requests.post(FORMSPREE_URL, data={"sujet": "Nouvelle Inscription", "pseudo": pseudo, "email": email}, timeout=10)
     except: pass
 
 # --- 2. GESTION DES FICHIERS ---
@@ -47,21 +47,19 @@ def init_file(file, columns):
     if not os.path.exists(file) or os.stat(file).st_size == 0:
         pd.DataFrame(columns=columns).to_csv(file, index=False)
 
-# Initialisation stricte
 init_file(USERS_FILE, ["email", "pseudo", "password", "role"])
 init_file(DEMANDES_FILE, ["email", "pseudo", "password"])
 
-if not os.path.exists(CODES_FILE):
-    with open(CODES_FILE, "w") as f:
-        for _ in range(1000): f.write(str(random.randint(100000, 999999)) + "\n")
-
-# Charger les utilisateurs existants
+# Correction cruciale : Charger d'abord, ajouter Yael SEULEMENT s'il est absent
 udb_init = pd.read_csv(USERS_FILE)
-# On ajoute l'admin SEULEMENT si le fichier est vide ou si Yael n'existe pas
 if "Yael" not in udb_init["pseudo"].values:
     admin_row = pd.DataFrame([["yassine.elkhayat@isv.be", "Yael", "Yassine05", "Admin"]], columns=["email", "pseudo", "password", "role"])
     udb_init = pd.concat([udb_init, admin_row], ignore_index=True)
     udb_init.to_csv(USERS_FILE, index=False)
+
+if not os.path.exists(CODES_FILE):
+    with open(CODES_FILE, "w") as f:
+        for _ in range(1000): f.write(str(random.randint(100000, 999999)) + "\n")
 
 # --- 3. SESSION STATE ---
 if "auth" not in st.session_state:
@@ -142,8 +140,9 @@ if not st.session_state["auth"]:
         c1, c2 = st.columns(2)
         if c1.button(L["btn_signup"]): st.session_state["view"] = "signup"; st.rerun()
         if c2.button(L["btn_forgot"]): st.session_state["view"] = "forgot"; st.session_state["reset_step"] = 1; st.rerun()
+    
     elif st.session_state["view"] == "forgot":
-        st.subheader("Réinitialisation de mot de passe")
+        st.subheader("🔑 Récupération de mot de passe")
         if st.session_state["reset_step"] == 1:
             fe = st.text_input("Email d'inscription")
             if st.button("Envoyer le code"):
@@ -156,33 +155,33 @@ if not st.session_state["auth"]:
                     st.success("Code envoyé via EmailJS")
                 else: st.error("Email inconnu.")
         elif st.session_state["reset_step"] == 2:
-            cs = st.text_input("Entrez le code reçu")
+            cs = st.text_input("Code reçu")
             if st.button("Vérifier"):
                 if cs == st.session_state["temp_code"]: st.session_state["reset_step"] = 3; st.rerun()
                 else: st.error("Code erroné.")
         elif st.session_state["reset_step"] == 3:
-            np = st.text_input("Nouveau mot de passe", type="password")
-            if st.button("Valider le changement"):
+            np = st.text_input("Nouveau MDP", type="password")
+            if st.button("Confirmer"):
                 db = pd.read_csv(USERS_FILE)
                 db.loc[db["email"] == st.session_state["temp_email"], "password"] = np
                 db.to_csv(USERS_FILE, index=False)
-                st.success("Mot de passe modifié !")
-                st.session_state["view"] = "login"
-                st.rerun()
+                st.success("Mot de passe mis à jour !")
+                st.session_state["view"] = "login"; st.rerun()
         if st.button("Retour"): st.session_state["view"] = "login"; st.rerun()
+        
     elif st.session_state["view"] == "signup":
-        st.title("📝 Demande d'Inscription")
-        ne, nu, np = st.text_input("Votre Email"), st.text_input("Pseudo choisi"), st.text_input("Mot de passe", type="password")
-        if st.button("Envoyer la demande à l'Admin"):
+        st.title("📝 Inscription")
+        ne, nu, np = st.text_input("Email"), st.text_input("Pseudo"), st.text_input("Mot de passe", type="password")
+        if st.button("Envoyer la demande"):
             if ne and nu and np:
                 ddb = pd.read_csv(DEMANDES_FILE)
                 pd.concat([ddb, pd.DataFrame([[ne, nu, np]], columns=["email", "pseudo", "password"])], ignore_index=True).to_csv(DEMANDES_FILE, index=False)
                 envoyer_formspree_inscription(nu, ne)
-                st.success("Demande envoyée ! L'admin va valider votre compte."); st.session_state["view"] = "login"; st.rerun()
+                st.success("Demande envoyée via Formspree !"); st.session_state["view"] = "login"; st.rerun()
         if st.button("Retour"): st.session_state["view"] = "login"; st.rerun()
     st.stop()
 
-# --- 7. BARRE LATÉRALE ---
+# --- 7. SIDEBAR ---
 with st.sidebar:
     st.header(f"👤 {st.session_state['user_connected']}")
     if st.button(L["home_btn"]): st.session_state["page_params"] = False; st.rerun()
@@ -195,23 +194,24 @@ with st.sidebar:
         st.session_state["ramadan_mode"] = not st.session_state["ramadan_mode"]; st.rerun()
     if st.button(L["btn_logout"]): st.session_state["auth"] = False; st.rerun()
 
-# --- 8. PAGES ---
+# --- 8. VUES PRINCIPALES (NOTIF / SETTINGS / ACCUEIL) ---
+
 if st.session_state["page_params"] == "notif" and st.session_state["is_admin"]:
-    st.title("🔔 Validations")
+    st.title("🔔 Panel Admin")
     ddb = pd.read_csv(DEMANDES_FILE)
     if ddb.empty: st.info("Aucune demande.")
     for i, r in ddb.iterrows():
         c1, c2, c3 = st.columns([3,1,1])
         c1.write(f"**{r['pseudo']}** ({r['email']})")
-        if c2.button("✅", key=f"ok_{i}"):
+        if c2.button("✅ Accepter", key=f"ok_{i}"):
             udb = pd.read_csv(USERS_FILE)
             pd.concat([udb, pd.DataFrame([[r['email'], r['pseudo'], r['password'], "Membre"]], columns=["email", "pseudo", "password", "role"])], ignore_index=True).to_csv(USERS_FILE, index=False)
             for f in [SAUV_LECTURE, SAUV_RAMADAN]:
-                tmp = verifier_et_creer_sauvegarde(f)
-                tmp.loc[r['pseudo']] = [1, 10, 0, 1]
-                tmp.to_csv(f)
+                tmp_df = verifier_et_creer_sauvegarde(f)
+                tmp_df.loc[r['pseudo']] = [1, 10, 0, 1]
+                tmp_df.to_csv(f)
             ddb.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
-        if c3.button("❌", key=f"no_{i}"):
+        if c3.button("❌ Refuser", key=f"no_{i}"):
             ddb.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
 
 elif st.session_state["page_params"] == "settings":
@@ -222,7 +222,7 @@ elif st.session_state["page_params"] == "settings":
         ch = st.selectbox("", list(TRAD.keys()), index=list(TRAD.keys()).index(st.session_state["langue"]))
         if ch != st.session_state["langue"]: st.session_state["langue"] = ch; st.rerun()
     with c2:
-        st.subheader("Dates")
+        st.subheader("Dates Ramadan")
         d1 = st.date_input(L["date_deb"], st.session_state["debut_ramadan"])
         d2 = st.date_input(L["date_fin"], st.session_state["fin_ramadan"])
         if st.button(L["btn_save"]):
@@ -233,7 +233,9 @@ else:
     st.title(L["titre_ram"] if st.session_state["ramadan_mode"] else L["titre_norm"])
     auj = date.today()
     view_df = df if st.session_state["is_admin"] else df[df.index == st.session_state["user_connected"]]
-    
     if not view_df.empty:
-        st.table(view_df)
-        # ... (Le reste du code d'affichage accueil : progression, planning, etc. reste identique)
+        st.subheader(L["etat"])
+        recap = view_df.copy()
+        recap[L["col_prog"]] = (recap["Page Actuelle"] / 604 * 100).round(1).astype(str) + "%"
+        st.table(recap)
+        # ... Reste du code d'affichage (expander, progression, etc.) inchangé
