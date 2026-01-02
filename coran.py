@@ -158,13 +158,14 @@ if st.session_state["page"] == "admin":
 # --- PAGE ACCUEIL ---
 st.title(L["titre_ram"] if st.session_state["ramadan_mode"] else L["titre_norm"])
 
-# Hadith
-if st.button(L["hadith_btn"]):
-    h_file = "hadiths_fr.txt" if st.session_state["langue"] == "Français" else "hadiths_ar.txt"
-    if os.path.exists(os.path.join(dossier, h_file)):
-        with open(os.path.join(dossier, h_file), "r", encoding="utf-8") as f:
-            lignes = f.readlines()
-            if lignes: st.info(random.choice(lignes))
+# Hadith - RESTREINT À YAEL
+if st.session_state["user_connected"] == "Yael":
+    if st.button(L["hadith_btn"]):
+        h_file = "hadiths_fr.txt" if st.session_state["langue"] == "Français" else "hadiths_ar.txt"
+        if os.path.exists(os.path.join(dossier, h_file)):
+            with open(os.path.join(dossier, h_file), "r", encoding="utf-8") as f:
+                lignes = f.readlines()
+                if lignes: st.info(random.choice(lignes))
 
 # 1. Tableau État Actuel
 st.subheader(L["etat"])
@@ -184,13 +185,18 @@ if not df_view.empty:
     # 3. Outils (3 colonnes)
     c1, c2, c3 = st.columns(3)
     with c1:
-        with st.expander(L["wa"]):
-            dc = st.date_input("Échéance", auj + timedelta(days=1))
-            msg = f"*Bilan {dc.strftime('%d/%m')}* :\n"
-            for n, r in df_view.iterrows():
-                p = (int(r["Page Actuelle"]) + (int(r["Rythme"]) * (dc - auj).days)) % 604 or 1
-                msg += f"• *{n.upper()}* : p.{int(p)}\n"
-            st.text_area("Copier :", msg)
+        # WhatsApp - RESTREINT À YAEL
+        if st.session_state["user_connected"] == "Yael":
+            with st.expander(L["wa"]):
+                dc = st.date_input("Échéance", auj + timedelta(days=1))
+                msg = f"*Bilan {dc.strftime('%d/%m')}* :\n"
+                for n, r in df_view.iterrows():
+                    p = (int(r["Page Actuelle"]) + (int(r["Rythme"]) * (dc - auj).days)) % 604 or 1
+                    msg += f"• *{n.upper()}* : p.{int(p)}\n"
+                st.text_area("Copier :", msg)
+        else:
+            st.info("Outils Admin (WA) réservés")
+            
     with c2:
         with st.expander(L["maj"]):
             u_sel = st.selectbox("Qui ?", df_view.index)
