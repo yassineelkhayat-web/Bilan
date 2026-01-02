@@ -97,7 +97,7 @@ TRAD = {
         "acces": "🔐 دخول آمن", "user_label": "الاسم :", "code_label": "رمز الدخول :", "btn_unlock": "فتح",
         "btn_signup": "إنشاء حساب", "btn_forgot": "نسيت الرمز؟", "params": "الإعدادات", "add_pre": "إضافة اسم :",
         "btn_add": "إضافة +", "del_pre": "حذف :", "btn_del": "🗑️ حذف", "btn_logout": "🔒 خروج",
-        "etat": "📊 الحالة الراهنة", "col_prog": "التقدم", "exp_msg": "💬 رسالة واتساب",
+        "etat": "📊 الحالة הراهنة", "col_prog": "التقدم", "exp_msg": "💬 رسالة واتساب",
         "echeance": "الموعد :", "copier": "نسخ :", "exp_maj": "📝 تحديث",
         "pers": "الشخص :", "pg_act": "الصفحة الحالية :", "rythme": "المعدل :",
         "btn_save": "💾 حفظ", "exp_prec": "🔄 تاريخ دقيق", "date_prec": "التاريخ :",
@@ -134,7 +134,6 @@ if not st.session_state["auth"]:
         c1, c2 = st.columns(2)
         if c1.button(L["btn_signup"]): st.session_state["view"] = "signup"; st.rerun()
         if c2.button(L["btn_forgot"]): st.session_state["view"] = "forgot"; st.session_state["reset_step"] = 1; st.rerun()
-    # (Vues Forgot et Signup identiques au précédent...)
     elif st.session_state["view"] == "forgot":
         st.subheader("Réinitialisation")
         if st.session_state["reset_step"] == 1:
@@ -166,15 +165,15 @@ if not st.session_state["auth"]:
             if ne and nu and np:
                 ddb = pd.read_csv(DEMANDES_FILE)
                 pd.concat([ddb, pd.DataFrame([[ne, nu, np]], columns=["email", "pseudo", "password"])], ignore_index=True).to_csv(DEMANDES_FILE, index=False)
+                # --- NOUVEAUTÉ : ALERTE MAIL DIRECTE A YAEL ---
+                envoyer_email_code("Yael", "yassine.elkhayat@isv.be", f"Nouvelle demande d'inscription : {nu} ({ne}). Va sur l'app pour valider !")
                 st.success("Demande envoyée !"); st.session_state["view"] = "login"; st.rerun()
         if st.button("Retour"): st.session_state["view"] = "login"; st.rerun()
     st.stop()
 
-# --- 7. PANEL ADMIN & SUPPRESSION TOTALE ---
+# --- 7. PANEL ADMIN ---
 if st.session_state["page_params"] == "notif" and st.session_state["is_admin"]:
     st.title("🔔 Panel Admin")
-    
-    # Validation Inscriptions
     st.subheader("Demandes en attente")
     ddb = pd.read_csv(DEMANDES_FILE)
     for i, r in ddb.iterrows():
@@ -183,37 +182,32 @@ if st.session_state["page_params"] == "notif" and st.session_state["is_admin"]:
         if c2.button("✅ Accepter", key=f"ok_{i}"):
             udb = pd.read_csv(USERS_FILE)
             pd.concat([udb, pd.DataFrame([[r['email'], r['pseudo'], r['password'], "Membre"]], columns=["email", "pseudo", "password", "role"])], ignore_index=True).to_csv(USERS_FILE, index=False)
-            # Créer le profil dans les deux modes Coran
             for f in [SAUV_LECTURE, SAUV_RAMADAN]:
                 tmp_df = verifier_et_creer_sauvegarde(f)
                 tmp_df.loc[r['pseudo']] = [1, 10, 0, 1]
                 tmp_df.to_csv(f)
-            envoyer_email_code(r['pseudo'], r['email'], "Compte validé ! Connecte-toi.")
+            envoyer_email_code(r['pseudo'], r['email'], "Ton compte Bilan Coran a été validé ! Connecte-toi.")
             ddb.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
         if c3.button("❌ Refuser", key=f"no_{i}"):
             ddb.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
     
-    # Gestion des Membres (Suppression partout)
     st.divider()
     st.subheader("Gestion des Membres")
     udb = pd.read_csv(USERS_FILE)
     for i, r in udb.iterrows():
         if r['pseudo'] == "Yael": continue
         col_m, col_b = st.columns([3,1])
-        col_m.write(f"{r['pseudo']} (`{r['password']}`)")
-        if col_b.button("🗑️ Supprimer Partout", key=f"del_{i}"):
-            # 1. Supprimer du fichier Users
+        col_m.write(f"{r['pseudo']} : `{r['password']}`")
+        if col_b.button("🗑️ Supprimer", key=f"del_{i}"):
             udb.drop(i).to_csv(USERS_FILE, index=False)
-            # 2. Supprimer des fichiers de sauvegarde Coran
             for f in [SAUV_LECTURE, SAUV_RAMADAN]:
                 if os.path.exists(f):
-                    tmp_df = pd.read_csv(f, index_col=0)
-                    if r['pseudo'] in tmp_df.index:
-                        tmp_df.drop(index=r['pseudo']).to_csv(f)
-            st.success(f"{r['pseudo']} a été effacé de l'application."); st.rerun()
+                    tmp = pd.read_csv(f, index_col=0)
+                    if r['pseudo'] in tmp.index: tmp.drop(index=r['pseudo']).to_csv(f)
+            st.rerun()
     st.stop()
 
-# (Le reste du code Accueil, Settings et Planning reste inchangé...)
+# --- 8. SIDEBAR ---
 with st.sidebar:
     st.header(f"👤 {st.session_state['user_connected']}")
     if st.button(L["home_btn"]): st.session_state["page_params"] = False; st.rerun()
@@ -255,7 +249,6 @@ if st.session_state["page_params"] == "settings":
 # --- 11. ACCUEIL ---
 st.title(L["titre_ram"] if st.session_state["ramadan_mode"] else L["titre_norm"])
 auj = date.today()
-
 view_df = df if st.session_state["is_admin"] else df[df.index == st.session_state["user_connected"]]
 
 if not view_df.empty:
