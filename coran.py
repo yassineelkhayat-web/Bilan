@@ -5,7 +5,7 @@ import os
 import random
 import requests
 
-# --- 1. CONFIGURATION API (EmailJS remplace SMTP) ---
+# --- 1. CONFIGURATION API ---
 EMAILJS_SERVICE_ID = "service_v9ebnic" 
 EMAILJS_TEMPLATE_ID = "template_rghkouc"
 EMAILJS_PUBLIC_KEY = "LUCKx4YnQSQ3ncrue"
@@ -33,6 +33,8 @@ CONFIG_FILE = os.path.join(dossier, "config_dates.csv")
 USERS_FILE = os.path.join(dossier, "users.csv")
 DEMANDES_FILE = os.path.join(dossier, "demandes.csv")
 CODES_FILE = os.path.join(dossier, "combinaisons.txt")
+SAUV_LECTURE = os.path.join(dossier, "sauvegarde_lecture.csv")
+SAUV_RAMADAN = os.path.join(dossier, "sauvegarde_ramadan.csv")
 
 def init_file(file, columns):
     if not os.path.exists(file) or os.stat(file).st_size == 0:
@@ -74,19 +76,7 @@ def verifier_et_creer_sauvegarde(fichier_cible):
         return df_v
     return pd.read_csv(fichier_cible, index_col=0)
 
-def charger_hadith_aleatoire(langue):
-    filename = os.path.join(dossier, "hadiths_fr.txt" if langue == "Français" else "hadiths_ar.txt")
-    try:
-        if os.path.exists(filename):
-            with open(filename, "r", encoding="utf-8") as f:
-                lignes = [l.strip() for l in f.readlines() if l.strip()]
-            if lignes:
-                choix = random.choice(lignes)
-                return (choix.split("|")[0].strip(), choix.split("|")[1].strip()) if "|" in choix else (choix, "Source")
-    except: pass
-    return "Fichier Hadith non trouvé.", "Info"
-
-# --- 4. TRADUCTIONS ---
+# --- 4. TRADUCTIONS & STYLE ---
 TRAD = {
     "Français": {
         "titre_norm": "📖 Bilan de Lecture", "titre_ram": "🌙 Mode Ramadan Pro", "titre_params": "⚙️ Configuration",
@@ -119,17 +109,16 @@ TRAD = {
 }
 L = TRAD.get(st.session_state["langue"], TRAD["Français"])
 
-# --- 5. STYLE ---
 COLOR = "#C5A059" if st.session_state["ramadan_mode"] else "#047857"
 st.set_page_config(page_title="Bilan Coran", layout="wide")
 st.markdown(f"<style>h1,h2,h3,p,label,span{{color:{COLOR}!important; text-align:center;}} div.stButton>button{{width:100%; border:2px solid {COLOR}; color:{COLOR}; border-radius:10px; font-weight:bold;}}</style>", unsafe_allow_html=True)
 
-# --- 6. DATA ---
+# --- 5. CHARGEMENT DATA ---
 suffixe = "ramadan" if st.session_state["ramadan_mode"] else "lecture"
-DATA_FILE = os.path.join(dossier, f"sauvegarde_{suffixe}.csv")
+DATA_FILE = SAUV_RAMADAN if st.session_state["ramadan_mode"] else SAUV_LECTURE
 df = verifier_et_creer_sauvegarde(DATA_FILE)
 
-# --- 7. AUTHENTIFICATION ---
+# --- 6. AUTHENTIFICATION ---
 if not st.session_state["auth"]:
     if st.session_state["view"] == "login":
         st.title(L["acces"])
@@ -145,7 +134,7 @@ if not st.session_state["auth"]:
         c1, c2 = st.columns(2)
         if c1.button(L["btn_signup"]): st.session_state["view"] = "signup"; st.rerun()
         if c2.button(L["btn_forgot"]): st.session_state["view"] = "forgot"; st.session_state["reset_step"] = 1; st.rerun()
-
+    # (Vues Forgot et Signup identiques au précédent...)
     elif st.session_state["view"] == "forgot":
         st.subheader("Réinitialisation")
         if st.session_state["reset_step"] == 1:
@@ -170,7 +159,6 @@ if not st.session_state["auth"]:
                 db = pd.read_csv(USERS_FILE); db.loc[db["email"] == st.session_state["temp_email"], "password"] = np
                 db.to_csv(USERS_FILE, index=False); st.session_state["view"] = "login"; st.rerun()
         if st.button("Retour"): st.session_state["view"] = "login"; st.rerun()
-
     elif st.session_state["view"] == "signup":
         st.title("📝 Inscription")
         ne, nu, np = st.text_input("Email"), st.text_input("Pseudo"), st.text_input("Mot de passe", type="password")
@@ -182,7 +170,50 @@ if not st.session_state["auth"]:
         if st.button("Retour"): st.session_state["view"] = "login"; st.rerun()
     st.stop()
 
-# --- 8. SIDEBAR ---
+# --- 7. PANEL ADMIN & SUPPRESSION TOTALE ---
+if st.session_state["page_params"] == "notif" and st.session_state["is_admin"]:
+    st.title("🔔 Panel Admin")
+    
+    # Validation Inscriptions
+    st.subheader("Demandes en attente")
+    ddb = pd.read_csv(DEMANDES_FILE)
+    for i, r in ddb.iterrows():
+        c1, c2, c3 = st.columns([3,1,1])
+        c1.write(f"**{r['pseudo']}**")
+        if c2.button("✅ Accepter", key=f"ok_{i}"):
+            udb = pd.read_csv(USERS_FILE)
+            pd.concat([udb, pd.DataFrame([[r['email'], r['pseudo'], r['password'], "Membre"]], columns=["email", "pseudo", "password", "role"])], ignore_index=True).to_csv(USERS_FILE, index=False)
+            # Créer le profil dans les deux modes Coran
+            for f in [SAUV_LECTURE, SAUV_RAMADAN]:
+                tmp_df = verifier_et_creer_sauvegarde(f)
+                tmp_df.loc[r['pseudo']] = [1, 10, 0, 1]
+                tmp_df.to_csv(f)
+            envoyer_email_code(r['pseudo'], r['email'], "Compte validé ! Connecte-toi.")
+            ddb.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
+        if c3.button("❌ Refuser", key=f"no_{i}"):
+            ddb.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
+    
+    # Gestion des Membres (Suppression partout)
+    st.divider()
+    st.subheader("Gestion des Membres")
+    udb = pd.read_csv(USERS_FILE)
+    for i, r in udb.iterrows():
+        if r['pseudo'] == "Yael": continue
+        col_m, col_b = st.columns([3,1])
+        col_m.write(f"{r['pseudo']} (`{r['password']}`)")
+        if col_b.button("🗑️ Supprimer Partout", key=f"del_{i}"):
+            # 1. Supprimer du fichier Users
+            udb.drop(i).to_csv(USERS_FILE, index=False)
+            # 2. Supprimer des fichiers de sauvegarde Coran
+            for f in [SAUV_LECTURE, SAUV_RAMADAN]:
+                if os.path.exists(f):
+                    tmp_df = pd.read_csv(f, index_col=0)
+                    if r['pseudo'] in tmp_df.index:
+                        tmp_df.drop(index=r['pseudo']).to_csv(f)
+            st.success(f"{r['pseudo']} a été effacé de l'application."); st.rerun()
+    st.stop()
+
+# (Le reste du code Accueil, Settings et Planning reste inchangé...)
 with st.sidebar:
     st.header(f"👤 {st.session_state['user_connected']}")
     if st.button(L["home_btn"]): st.session_state["page_params"] = False; st.rerun()
@@ -194,31 +225,6 @@ with st.sidebar:
     if st.button(L["mode_norm_btn"] if st.session_state["ramadan_mode"] else L["mode_ram_btn"]):
         st.session_state["ramadan_mode"] = not st.session_state["ramadan_mode"]; st.rerun()
     if st.button(L["btn_logout"]): st.session_state["auth"] = False; st.rerun()
-
-# --- 9. NOTIF / ADMIN ---
-if st.session_state["page_params"] == "notif" and st.session_state["is_admin"]:
-    st.title("🔔 Validation")
-    ddb = pd.read_csv(DEMANDES_FILE)
-    for i, r in ddb.iterrows():
-        c1, c2 = st.columns([3,1])
-        c1.write(f"**{r['pseudo']}**")
-        if c2.button("✅", key=f"ok_{i}"):
-            udb = pd.read_csv(USERS_FILE)
-            pd.concat([udb, pd.DataFrame([[r['email'], r['pseudo'], r['password'], "Membre"]], columns=["email", "pseudo", "password", "role"])], ignore_index=True).to_csv(USERS_FILE, index=False)
-            df.loc[r['pseudo']] = [1, 10, 0, 1]; df.to_csv(DATA_FILE)
-            envoyer_email_code(r['pseudo'], r['email'], "Ton compte Bilan Coran a été validé par Yael !")
-            ddb.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
-    
-    st.divider()
-    st.subheader("Membres & MDP")
-    udb = pd.read_csv(USERS_FILE)
-    for i, r in udb.iterrows():
-        if r['pseudo'] == "Yael": continue
-        c1, c2 = st.columns([3,1])
-        c1.write(f"{r['pseudo']} : `{r['password']}`")
-        if c2.button("🗑️", key=f"del_{i}"):
-            udb.drop(i).to_csv(USERS_FILE, index=False); st.rerun()
-    st.stop()
 
 # --- 10. SETTINGS ---
 if st.session_state["page_params"] == "settings":
@@ -296,13 +302,6 @@ if not view_df.empty:
                 delt = (auj - da).days
                 np = (pda + (int(df.loc[ua, "Rythme"]) * delt)) % 604 or 1
                 df.loc[ua, "Page Actuelle"] = int(np); df.to_csv(DATA_FILE); st.rerun()
-
-    if st.session_state["ramadan_mode"]:
-        st.divider()
-        if st.button(L["hadith_btn"]):
-            txt, src = charger_hadith_aleatoire(st.session_state["langue"])
-            st.session_state["h_msg"] = f"✨ *Hadith* :\n\n{txt}\n\n📚 {src}"
-        if "h_msg" in st.session_state: st.text_area(L["copier"], st.session_state["h_msg"])
 
     st.subheader(L["plan"])
     plan_df = pd.DataFrame(index=[(auj + timedelta(days=i)).strftime("%d/%m") for i in range(30)])
