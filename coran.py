@@ -128,31 +128,74 @@ if st.session_state["page"] == "params":
 
 # --- PAGE ADMIN ---
 if st.session_state["page"] == "admin":
-    st.title("🔔 Notifications")
-    ddb = pd.read_csv(DEMANDES_FILE)
-    for i, r in ddb.iterrows():
-        c1, c2, c3 = st.columns([2,1,1])
-        c1.write(f"Inscrire **{r['pseudo']}** ?")
-        if c2.button("✅", key=f"a_{i}"):
-            udb = pd.read_csv(USERS_FILE)
-            pd.concat([udb, pd.DataFrame([[r['pseudo'], r['password'], "Membre"]], columns=["pseudo", "password", "role"])], ignore_index=True).to_csv(USERS_FILE, index=False)
-            for m in ["lecture", "ramadan"]:
-                f = os.path.join(dossier, f"sauvegarde_{m}.csv")
-                temp = pd.read_csv(f, index_col=0) if os.path.exists(f) else pd.DataFrame(columns=["Page Actuelle", "Rythme", "Cycles Finis", "Objectif Khatmas"], index=["Nom"])
-                temp.loc[r['pseudo']] = [1, 10, 0, 1]
-                temp.to_csv(f)
-            ddb.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
-        if c3.button("❌", key=f"r_{i}"): ddb.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
+    st.title("🔔 Administration")
     
-    fdb = pd.read_csv(FORGOT_FILE)
-    for i, r in fdb.iterrows():
-        udb = pd.read_csv(USERS_FILE)
-        anc = udb[udb["pseudo"]==r["pseudo"]].iloc[0]["password"] if r["pseudo"] in udb["pseudo"].values else "Inconnu"
-        st.warning(f"MDP Oublié : {r['pseudo']} (Ancien: {anc})")
-        nv = st.text_input("Nouveau MDP", key=f"nv_{i}")
-        if st.button("Enregistrer", key=f"s_{i}"):
-            udb.loc[udb["pseudo"]==r["pseudo"], "password"] = nv
-            udb.to_csv(USERS_FILE, index=False); fdb.drop(i).to_csv(FORGOT_FILE, index=False); st.rerun()
+    # Section Demandes & Mots de passe oubliés
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.subheader("Inscriptions")
+        ddb = pd.read_csv(DEMANDES_FILE)
+        for i, r in ddb.iterrows():
+            st.write(f"**{r['pseudo']}**")
+            c1, c2 = st.columns(2)
+            if c1.button("✅", key=f"a_{i}"):
+                udb = pd.read_csv(USERS_FILE)
+                pd.concat([udb, pd.DataFrame([[r['pseudo'], r['password'], "Membre"]], columns=["pseudo", "password", "role"])], ignore_index=True).to_csv(USERS_FILE, index=False)
+                for m in ["lecture", "ramadan"]:
+                    f = os.path.join(dossier, f"sauvegarde_{m}.csv")
+                    temp = pd.read_csv(f, index_col=0) if os.path.exists(f) else pd.DataFrame(columns=["Page Actuelle", "Rythme", "Cycles Finis", "Objectif Khatmas"], index=["Nom"])
+                    temp.loc[r['pseudo']] = [1, 10, 0, 1]
+                    temp.to_csv(f)
+                ddb.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
+            if c2.button("❌", key=f"r_{i}"): ddb.drop(i).to_csv(DEMANDES_FILE, index=False); st.rerun()
+
+    with col_b:
+        st.subheader("Mdp Oubliés")
+        fdb = pd.read_csv(FORGOT_FILE)
+        for i, r in fdb.iterrows():
+            udb = pd.read_csv(USERS_FILE)
+            anc = udb[udb["pseudo"]==r["pseudo"]].iloc[0]["password"] if r["pseudo"] in udb["pseudo"].values else "Inconnu"
+            st.warning(f"{r['pseudo']} (Ancien: {anc})")
+            nv = st.text_input("Nouveau MDP", key=f"nv_{i}")
+            if st.button("Enregistrer", key=f"s_{i}"):
+                udb.loc[udb["pseudo"]==r["pseudo"], "password"] = nv
+                udb.to_csv(USERS_FILE, index=False); fdb.drop(i).to_csv(FORGOT_FILE, index=False); st.rerun()
+
+    # --- SECTION GESTION MEMBRES (YAEL SEULEMENT) ---
+    if st.session_state["user_connected"] == "Yael":
+        st.divider()
+        st.subheader("👥 Gestion des Membres")
+        udb_list = pd.read_csv(USERS_FILE)
+        
+        for i, row in udb_list.iterrows():
+            if row["pseudo"] == "Yael": continue # Ne pas se bannir soi-même
+            
+            c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
+            c1.write(f"**{row['pseudo']}**")
+            
+            # Système d'oeil pour le MDP
+            show_key = f"show_{row['pseudo']}"
+            if show_key not in st.session_state: st.session_state[show_key] = False
+            
+            mdp_display = row['password'] if st.session_state[show_key] else "********"
+            c2.code(mdp_display, language=None)
+            
+            if c3.button("👁️", key=f"eye_{i}"):
+                st.session_state[show_key] = not st.session_state[show_key]
+                st.rerun()
+                
+            if c4.button("🚫", key=f"ban_{i}"):
+                # Supprimer des utilisateurs
+                udb_list.drop(i).to_csv(USERS_FILE, index=False)
+                # Supprimer de toutes les sauvegardes
+                for m in ["lecture", "ramadan"]:
+                    f_path = os.path.join(dossier, f"sauvegarde_{m}.csv")
+                    if os.path.exists(f_path):
+                        temp_df = pd.read_csv(f_path, index_col=0)
+                        if row['pseudo'] in temp_df.index:
+                            temp_df.drop(row['pseudo']).to_csv(f_path)
+                st.error(f"{row['pseudo']} banni !")
+                st.rerun()
     st.stop()
 
 # --- PAGE ACCUEIL ---
